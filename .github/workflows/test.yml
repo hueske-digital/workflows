@@ -32,12 +32,12 @@ jobs:
       context: test
       build-args: GREETING=built-{version}
       runner: github
+      # A pull request builds only.
+      push: ${{ github.event_name != 'pull_request' }}
     secrets:
       build-secrets: |
         PROOF=workflows-${{ github.run_id }}
         UNUSED=
-      # A pull request builds only.
-      push: ${{ github.event_name != 'pull_request' }}
 
   run:
     if: needs.image.outputs.built == 'true' && needs.image.outputs.digest != ''
