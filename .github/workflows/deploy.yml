@@ -1,0 +1,54 @@
+# Asks a host of hueske-digital/infrastructure to deploy a stack's new
+# image, through the stack's deploy hook (deploy/README.md), and with
+# health-url waits until the stack's page tells the new version. A private
+# repository runs it on the organization's runners, a public one on
+# GitHub's. The caller grants nothing.
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      host:
+        description: The wan name of the stack's host, like wan.worksforme.wontfix.xyz (from a repository variable).
+        type: string
+        required: true
+      stack:
+        description: The stack's name in the host's list.
+        type: string
+        required: true
+      health-url:
+        description: A page of the stack that tells its version; it is asked until it answers health-json.
+        type: string
+        default: ''
+      health-json:
+        description: 'The fields health-url must answer with, as a JSON object; "{commit}" stands for the run''s commit.'
+        type: string
+        default: ''
+      health-timeout:
+        description: How many seconds health-url is asked before the job fails.
+        type: string
+        default: '600'
+      runner:
+        description: self-hosted, github, or auto, which takes the organization's runners for a private repository.
+        type: string
+        default: auto
+    secrets:
+      secret:
+        description: The stack's deploy secret.
+        required: true
+
+permissions: {}
+
+jobs:
+  deploy:
+    runs-on: ${{ (inputs.runner == 'self-hosted' || (inputs.runner == 'auto' && github.event.repository.private)) && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: hueske-digital/workflows/deploy@v1
+        with:
+          host: ${{ inputs.host }}
+          stack: ${{ inputs.stack }}
+          secret: ${{ secrets.secret }}
+          health-url: ${{ inputs.health-url }}
+          health-json: ${{ inputs.health-json }}
+          health-timeout: ${{ inputs.health-timeout }}
