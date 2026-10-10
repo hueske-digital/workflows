@@ -93,17 +93,91 @@ architecture. The site's Dockerfile builds alone as well (`docker build
 `dist/` of the runner in that stage's place, so that the stage is not run
 and the site is built once.
 
+The workflow asks two things of the Dockerfile: a stage named `build`
+(the input `stage`) that leaves the site in `/app/dist` (`stage-path`).
+Everything else is the site's. Two forms of it are in use.
+
+**Bundled**, the default for a site: `vite: { ssr: { noExternal: true } }`
+in `astro.config.ts` puts the dependencies of the server's endpoints into
+`dist/server`, and the image is Node and `dist/`.
+
 ```dockerfile
 FROM node:26-alpine AS build
+RUN npm install -g corepack@latest && corepack enable
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack install && pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM node:26-alpine AS runtime
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=4321 ASTRO_NODE_LOGGING=disabled
+WORKDIR /app
+USER node
+EXPOSE 4321
+CMD ["node", "--import", "data:text/javascript,process.on('SIGTERM',()=>process.exit(0))", "./dist/server/entry.mjs"]
+
+COPY --from=build /app/dist ./dist
+```
+
+**With `node_modules`**, as Astro's Docker recipe has it, for a site whose
+server needs a package that cannot be bundled (native code, like `sharp`
+for images on request or a database driver): no line in `astro.config.ts`,
+and the runtime stage takes the production dependencies from a stage of
+their own.
+
+```dockerfile
+FROM node:26-alpine AS base
+RUN npm install -g corepack@latest && corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack install
+
+FROM base AS build
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-FROM node:26-alpine
+FROM base AS deps
+RUN pnpm install --prod --frozen-lockfile
+
+FROM node:26-alpine AS runtime
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=4321 ASTRO_NODE_LOGGING=disabled
+WORKDIR /app
+USER node
+EXPOSE 4321
+CMD ["node", "--import", "data:text/javascript,process.on('SIGTERM',()=>process.exit(0))", "./dist/server/entry.mjs"]
+
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 ```
+
+What both rely on, and why:
+
+- **Few instructions in the stages the runner builds, and what changes
+  with every build last.** On the organization's runners an instruction
+  costs 4 to 5 s also when it comes from the cache (Buildah's vfs storage
+  copies the image for each). The bundled form runs 7 of them in CI, the
+  other about twice as many: its `base` and `deps` stages are built there
+  too. For one site (weserkoeter) the image took 113 s with 17
+  instructions and an install of its own in the runtime stage, and 51 s
+  bundled; the image is 216 MB instead of 465 MB.
+- **A package that cannot be bundled fails when the image starts**, not at
+  the build. After adding a dependency of the server, a site of the
+  bundled form runs its image once and uses what needs it (submits a
+  form).
+- **Node is PID 1 and ignores SIGTERM without a handler**: a stop waited
+  30 s and ended in a kill (exit 137). The handler on the command line
+  ends it at once with 0, without an init in the image; tini or the
+  engine's init end it as fast, with 143, which systemd takes for a
+  failed end.
+- **No `HEALTHCHECK`.** The host's unit has the check
+  (hueske-digital/infrastructure, `health:` of the stack's entry) and runs
+  it with the image's `wget`; one in the image only serves a `docker run`
+  by hand.
+- **The site tells its commit and whether it is configured** at the page
+  `deploy.yml` waits for (`health-json`), so that a site that is up but
+  cannot do its job fails its deploy.
 
 ```yaml
 jobs:
