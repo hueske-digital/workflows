@@ -60,8 +60,18 @@ are refused there, `BUILDPLATFORM` is empty, a `# syntax=` line is
 ignored, and there are no build secrets and no attestations. The image
 is written in the docker format, which keeps `HEALTHCHECK` and `SHELL`.
 
-Every build reads the cache; only builds of the default branch and of
-tags write it, as a step in it is used by every later build. A pull
+With `cache: registry` every instruction is a layer of its own, kept in
+the repository `<image>/cache`: every build reads it, and only builds of
+the default branch and of tags write it, as a step in it is used by every
+later build. That pays for a `RUN` that takes long. It has a price for
+every instruction, though: Buildah compares the whole file tree to make
+the layer and pulls or pushes a cache image of its own, 2 to 5 s each also
+for a line that only configures, and tens of seconds once many files are
+in the image. `cache: none` builds one layer a stage and asks no
+registry: for a Dockerfile whose stages copy and configure it is the
+faster one (one application's image took 155 s with the registry and
+72 s without, a site's 17 s and 11 s). `astro.yml` builds without by
+default (`layer-cache`). A pull
 request passes `push: false` and builds only. Nothing is removed from the
 registry: the tags `sha-<commit>-<arch>` of two architectures and the
 cache's steps stay.
@@ -80,6 +90,7 @@ cache's steps stay.
 | `node-version-file` | `.nvmrc` | with `prepare`, names the Node version, in that directory |
 | `build-contexts` | | one `name=directory` a line: the directory takes the place of the Dockerfile's stage of that name |
 | `pnpm-store` | | with `prepare`, a path in the build where every `RUN` finds the runner's pnpm store |
+| `cache` | `registry` | `none` builds one layer a stage and asks no registry |
 | `latest` | `branch` | `release` puts `latest` on the newest pushed version tag and gives the default branch its own name as its tag |
 | `push` | `true` | `false` builds only, as for a pull request |
 | `stale-days` | `30` | a scheduled run builds a `latest` of that age; `0` builds every run |
@@ -264,6 +275,7 @@ build otherwise.
 | `cache` | `.astro-cache` | Astro's `cacheDir` |
 | `stage` | `build` | the Dockerfile's stage that builds the site |
 | `stage-path` | `/app/dist` | where that stage leaves `dist/` |
+| `layer-cache` | `none` | `registry` for a Dockerfile with a `RUN` that takes long |
 | `file`, `build-args`, `labels`, `tags`, `push`, `stale-days`, `runner` | | as for `image.yml` |
 
 Outputs: `image`, `digest` and `built`.
@@ -272,7 +284,10 @@ Outputs: `image`, `digest` and `built`.
 
 Checks a Node project with pnpm: Node as `.nvmrc` names it, pnpm as
 `packageManager` of `package.json` does, `pnpm install --frozen-lockfile`
-with pnpm's store kept between runs, then the commands of `run`. On the
+with pnpm's store kept between runs, then the commands of `run`. Every
+run restores the store (a changed lockfile starts from the newest one
+before it); only the default branch saves it, so that a pull request
+uploads nothing. On the
 organization's runners it takes one of either architecture. They have no
 Docker daemon: tests that start containers pass `runner: github`.
 
