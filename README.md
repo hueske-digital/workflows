@@ -84,11 +84,12 @@ scheduled run that found nothing to build.
 
 ## astro.yml
 
-Checks an Astro site, builds it on the runner and packs it into its image,
-in one job: the scripts of `checks`, `astro build` with Astro's cache of
-converted images and fonts kept between runs, the scripts of
-`checks-after`, then the image as `image.yml` builds it, for one
-architecture. The site's Dockerfile builds alone as well (`docker build
+Checks an Astro site, builds it on the runner and packs it into its image:
+the scripts of `checks` in one job, and beside it on a second runner
+`astro build` with Astro's cache of converted images and fonts kept
+between runs, the scripts of `checks-after` and the image as `image.yml`
+builds it, for one architecture, pushed as `sha-<commit>`. A third job
+gives the image its other tags (`latest`) once both succeeded. The site's Dockerfile builds alone as well (`docker build
 .`): it has a stage that builds the site, and the workflow puts the
 `dist/` of the runner in that stage's place, so that the stage is not run
 and the site is built once.
