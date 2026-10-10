@@ -1,0 +1,16 @@
+{
+  "name": "workflows-test-site",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "lint": "node scripts.mjs lint",
+    "check": "node scripts.mjs check",
+    "test": "node scripts.mjs test",
+    "build": "node scripts.mjs build",
+    "after": "node scripts.mjs after"
+  },
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}

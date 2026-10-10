@@ -1,15 +1,15 @@
 #!/bin/bash
-# Runs the build step of image.yml with a buildah and a skopeo of its own
+# Runs scripts/build.sh with a buildah and a skopeo of its own
 # (no registry, no build) and checks when a run builds: a scheduled one
 # only for a changed base image or a latest of stale-days, every other
 # always; and which images of a Dockerfile count as its bases.
-# Needs python3 with yaml, jq and GNU date.
+# Needs jq and GNU date.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-python3 -c 'import sys, yaml; print(yaml.safe_load(open(".github/workflows/image.yml"))["jobs"]["build"]["steps"][1]["run"])' > "$work/step.sh"
+cp scripts/build.sh "$work/step.sh"
 mkdir "$work/bin" "$work/ctx"
 # buildah: every call is a line of the log, a push writes its digest file.
 cat > "$work/bin/buildah" <<'STUB'

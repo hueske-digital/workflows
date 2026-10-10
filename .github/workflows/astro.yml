@@ -1,0 +1,212 @@
+# Checks an Astro site, builds it on the runner and packs it into its
+# image with Buildah, in one job:
+#   the scripts of checks, astro build with Astro's cache of converted
+#   images and fonts kept between runs, the scripts of checks-after, then
+#   the image, where the dist/ of the runner takes the place of the
+#   Dockerfile's stage that builds the site: that stage is not run.
+# The Dockerfile still builds alone (docker build .), with its own stage.
+# A scheduled run builds only when a base image changed or latest is
+# stale-days old, as in image.yml, and then skips the site's build too.
+# It runs on the organization's own runners; a public repository passes
+# runner: github. The caller grants contents: read and, to push,
+# packages: write (README.md).
+name: astro
+
+on:
+  workflow_call:
+    inputs:
+      directory:
+        description: The site's directory in the repository.
+        type: string
+        default: .
+      image:
+        description: The image without a tag; ghcr.io/<owner>/<repository> in lower case without it.
+        type: string
+        default: ''
+      arch:
+        description: amd64 or arm64, the architecture of the host that runs the site.
+        type: string
+        default: arm64
+      node-version-file:
+        description: The file that names the Node version, in the site's directory.
+        type: string
+        default: .nvmrc
+      checks:
+        description: The scripts of package.json that run before the build, separated by spaces.
+        type: string
+        default: lint check test
+      checks-after:
+        description: The scripts that run after the build and read dist/.
+        type: string
+        default: ''
+      cache:
+        description: Astro's cacheDir, in the site's directory.
+        type: string
+        default: .astro-cache
+      stage:
+        description: The stage of the Dockerfile that builds the site.
+        type: string
+        default: build
+      stage-path:
+        description: Where that stage leaves dist/, as the Dockerfile copies it from there.
+        type: string
+        default: /app/dist
+      file:
+        description: The Dockerfile, from the repository's root; Dockerfile of the site's directory without it.
+        type: string
+        default: ''
+      build-args:
+        description: One NAME=value a line.
+        type: string
+        default: ''
+      labels:
+        description: One name=value a line, besides the source and the revision.
+        type: string
+        default: ''
+      tags:
+        description: Tags besides sha-<commit>, one a line; without it latest on the default branch, and the tag's name for a pushed tag.
+        type: string
+        default: ''
+      push:
+        description: false checks and builds without pushing, as for a pull request.
+        type: boolean
+        default: true
+      stale-days:
+        description: A scheduled run builds when a base image changed or latest is this many days old; 0 builds every run.
+        type: number
+        default: 30
+      runner:
+        description: self-hosted, the organization's runners, or github, GitHub's, which a public repository takes.
+        type: string
+        default: self-hosted
+    outputs:
+      image:
+        description: The image without a tag.
+        value: ${{ jobs.site.outputs.image }}
+      built:
+        description: false for a scheduled run that found nothing to build.
+        value: ${{ jobs.site.outputs.built }}
+      digest:
+        description: The digest of the pushed image, empty without push.
+        value: ${{ jobs.site.outputs.digest }}
+
+jobs:
+  site:
+    runs-on: ${{ inputs.runner != 'github' && fromJSON(format('["self-hosted", "buildah", "{0}"]', inputs.arch == 'arm64' && 'ARM64' || 'X64')) || (inputs.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04') }}
+    timeout-minutes: 45
+    outputs:
+      image: ${{ steps.due.outputs.image }}
+      built: ${{ steps.due.outputs.built }}
+      digest: ${{ steps.image.outputs.digest }}
+    # Every input reaches a script through the environment, never as text
+    # of it.
+    env:
+      ARCH: ${{ inputs.arch }}
+      IMAGE: ${{ inputs.image }}
+      CONTEXT: ${{ inputs.directory }}
+      FILE: ${{ inputs.file }}
+      BUILD_ARGS: ${{ inputs.build-args }}
+      LABELS: ${{ inputs.labels }}
+      TAGS: ${{ inputs.tags }}
+      PUSH: ${{ inputs.push }}
+      RUNNER: ${{ inputs.runner }}
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      SINGLE: true
+      FIRST_ARCH: ${{ inputs.arch }}
+      STALE_DAYS: ${{ inputs.stale-days }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # scripts/build.sh of the commit this workflow is called at.
+      - env:
+          SCRIPT: https://raw.githubusercontent.com/${{ job.workflow_repository }}/${{ job.workflow_sha }}/scripts/build.sh
+        run: curl --fail --silent --show-error --location --retry 3 --max-time 30 --output "$RUNNER_TEMP/build.sh" "$SCRIPT"
+      # Whether this run builds: a scheduled one may have nothing to do.
+      - id: due
+        working-directory: .
+        env:
+          CHECK_ONLY: true
+        run: bash "$RUNNER_TEMP/build.sh"
+      - if: steps.due.outputs.built == 'true'
+        env:
+          CHECKS: ${{ inputs.checks }} ${{ inputs.checks-after }}
+          STAGE: ${{ inputs.stage }}
+          STAGE_PATH: ${{ inputs.stage-path }}
+        run: |
+          set -euo pipefail
+          for script in $CHECKS; do
+            [[ $script =~ ^[A-Za-z0-9][A-Za-z0-9:._-]*$ ]] || { echo "::error::$script is no script of package.json"; exit 1; }
+          done
+          [[ $STAGE =~ ^[a-z][a-z0-9_.-]*$ ]] || { echo "::error::stage $STAGE is no name of a stage"; exit 1; }
+          if ! [[ $STAGE_PATH =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || [[ $STAGE_PATH == *..* ]]; then
+            echo "::error::stage-path $STAGE_PATH is no absolute path"
+            exit 1
+          fi
+      - if: steps.due.outputs.built == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: ${{ inputs.directory }}/package.json
+      - if: steps.due.outputs.built == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ${{ inputs.directory }}/${{ inputs.node-version-file }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.directory }}/pnpm-lock.yaml
+      - if: steps.due.outputs.built == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.due.outputs.built == 'true'
+        env:
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          set -euo pipefail
+          for script in $CHECKS; do
+            echo "::group::pnpm run $script"
+            pnpm run "$script"
+            echo "::endgroup::"
+          done
+      # Converted images and fonts: without it every run computes all of
+      # them again. A run saves under its own key and starts from the
+      # newest one before it.
+      - if: steps.due.outputs.built == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ inputs.directory }}/${{ inputs.cache }}
+          key: astro-${{ inputs.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}-${{ github.run_id }}
+          restore-keys: |
+            astro-${{ inputs.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}-
+            astro-${{ inputs.arch }}-
+      - if: steps.due.outputs.built == 'true'
+        run: pnpm run build
+      - if: steps.due.outputs.built == 'true'
+        env:
+          CHECKS: ${{ inputs.checks-after }}
+        run: |
+          set -euo pipefail
+          for script in $CHECKS; do
+            echo "::group::pnpm run $script"
+            pnpm run "$script"
+            echo "::endgroup::"
+          done
+      # dist/ where the Dockerfile's stage would leave it, as a build
+      # context of that stage's name.
+      - if: steps.due.outputs.built == 'true'
+        env:
+          STAGE_PATH: ${{ inputs.stage-path }}
+        run: |
+          set -euo pipefail
+          [ -d dist ] || { echo "::error::the build left no dist/"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/stage$(dirname "$STAGE_PATH")"
+          mv dist "$RUNNER_TEMP/stage$STAGE_PATH"
+      - id: image
+        if: steps.due.outputs.built == 'true'
+        working-directory: .
+        env:
+          BUILD_CONTEXTS: ${{ inputs.stage }}=${{ runner.temp }}/stage
+        run: bash "$RUNNER_TEMP/build.sh"

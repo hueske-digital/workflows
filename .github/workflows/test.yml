@@ -2,7 +2,8 @@ name: test
 
 # Builds test/ with image.yml on GitHub's runners and runs the result on
 # both architectures, runs the deploy action against a real webhook, and
-# checks when a scheduled run builds (test/stale.sh). This repository is public: the organization's own
+# checks when a scheduled run builds (test/stale.sh), and builds test/site
+# with astro.yml, whose image must hold the dist/ of the runner. This repository is public: the organization's own
 # runners serve private repositories only, where image.yml takes them.
 on:
   push:
@@ -53,6 +54,36 @@ jobs:
           set -euo pipefail
           printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
           [ "$(podman run --rm "$IMAGE")" = built ]
+
+  site:
+    uses: ./.github/workflows/astro.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      directory: test/site
+      image: ghcr.io/hueske-digital/workflows/test-site
+      arch: amd64
+      checks-after: after
+      push: ${{ github.event_name != 'pull_request' }}
+      runner: github
+
+  site-run:
+    if: needs.site.outputs.built == 'true' && needs.site.outputs.digest != ''
+    needs: site
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    steps:
+      - shell: bash
+        env:
+          IMAGE: ${{ needs.site.outputs.image }}@${{ needs.site.outputs.digest }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          [ "$(podman run --rm "$IMAGE")" = "the runner true" ]
 
   deploy:
     runs-on: ubuntu-26.04
