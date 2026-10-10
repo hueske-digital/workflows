@@ -29,6 +29,7 @@ jobs:
       image: ghcr.io/hueske-digital/workflows/test
       context: test
       build-args: GREETING=built
+      runner: github
       # A pull request builds only.
       push: ${{ github.event_name != 'pull_request' }}
 

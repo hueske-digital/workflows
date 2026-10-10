@@ -1,8 +1,8 @@
 # Asks a host of hueske-digital/infrastructure to deploy a stack's new
 # image, through the stack's deploy hook (deploy/README.md), and with
-# health-url waits until the stack's page tells the new version. A private
-# repository runs it on the organization's runners, a public one on
-# GitHub's. The caller grants nothing.
+# health-url waits until the stack's page tells the new version. It runs
+# on the organization's runners, which serve private repositories; a
+# public one passes runner: github. The caller grants nothing.
 name: deploy
 
 on:
@@ -29,9 +29,9 @@ on:
         type: string
         default: '600'
       runner:
-        description: self-hosted, github, or auto, which takes the organization's runners for a private repository.
+        description: self-hosted, the organization's runners, or github, GitHub's, which a public repository takes.
         type: string
-        default: auto
+        default: self-hosted
     secrets:
       secret:
         description: The stack's deploy secret.
@@ -41,7 +41,7 @@ permissions: {}
 
 jobs:
   deploy:
-    runs-on: ${{ (inputs.runner == 'self-hosted' || (inputs.runner == 'auto' && github.event.repository.private)) && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
+    runs-on: ${{ inputs.runner != 'github' && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
     timeout-minutes: 20
     steps:
       - uses: hueske-digital/workflows/deploy@v1
