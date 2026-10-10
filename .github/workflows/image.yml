@@ -44,6 +44,10 @@ on:
         description: Tags besides sha-<commit>, one a line; without it latest on the default branch, and the tag's name for a pushed tag.
         type: string
         default: ''
+      latest:
+        description: branch, where latest is the default branch, or release, where it is the newest pushed version tag and the default branch has its own name as its tag.
+        type: string
+        default: branch
       push:
         description: false builds without pushing, as for a pull request.
         type: boolean
@@ -56,10 +60,17 @@ on:
         description: self-hosted, the organization's runners, or github, GitHub's, which a public repository takes.
         type: string
         default: self-hosted
+    secrets:
+      build-secrets:
+        description: Secrets of the build, ID=value a line; a RUN of the Dockerfile reads one from /run/secrets/ID with --mount=type=secret,id=ID.
+        required: false
     outputs:
       image:
         description: The image without a tag.
         value: ${{ jobs.build.outputs.image }}
+      version:
+        description: A pushed version tag without its v, else the tag, pr-<number> or the branch.
+        value: ${{ jobs.build.outputs.version }}
       built:
         description: false for a scheduled run that found nothing to build.
         value: ${{ jobs.build.outputs.built }}
@@ -80,6 +91,7 @@ jobs:
     outputs:
       image: ${{ steps.build.outputs.image }}
       tags: ${{ steps.build.outputs.tags }}
+      version: ${{ steps.build.outputs.version }}
       built: ${{ steps.build.outputs.built }}
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -102,6 +114,8 @@ jobs:
           BUILD_ARGS: ${{ inputs.build-args }}
           LABELS: ${{ inputs.labels }}
           TAGS: ${{ inputs.tags }}
+          LATEST: ${{ inputs.latest }}
+          BUILD_SECRETS: ${{ secrets.build-secrets }}
           PUSH: ${{ inputs.push }}
           RUNNER: ${{ inputs.runner }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}

@@ -30,8 +30,12 @@ jobs:
     with:
       image: ghcr.io/hueske-digital/workflows/test
       context: test
-      build-args: GREETING=built
+      build-args: GREETING=built-{version}
       runner: github
+    secrets:
+      build-secrets: |
+        PROOF=workflows-${{ github.run_id }}
+        UNUSED=
       # A pull request builds only.
       push: ${{ github.event_name != 'pull_request' }}
 
@@ -53,7 +57,9 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-          [ "$(podman run --rm "$IMAGE")" = built ]
+          version=${GITHUB_REF_NAME//\//-}
+          [ "$(podman run --rm "$IMAGE")" = "built-$version" ]
+          [ "$(podman run --rm "$IMAGE" cat /proof-length)" -gt 10 ]
 
   site:
     uses: ./.github/workflows/astro.yml

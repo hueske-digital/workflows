@@ -75,12 +75,46 @@ cache's steps stay.
 | `build-args` | | one `NAME=value` a line |
 | `labels` | | one `name=value` a line |
 | `tags` | | tags besides `sha-<commit>`, one a line, instead of the defaults |
+| `latest` | `branch` | `release` puts `latest` on the newest pushed version tag and gives the default branch its own name as its tag |
 | `push` | `true` | `false` builds only, as for a pull request |
 | `stale-days` | `30` | a scheduled run builds a `latest` of that age; `0` builds every run |
 | `runner` | `self-hosted` | `github` for a public repository |
 
-Outputs: `image`, `digest` of what was pushed, and `built`, `false` for a
-scheduled run that found nothing to build.
+Secret: `build-secrets`, the build's secrets, `ID=value` a line.
+
+Outputs: `image`, `digest` of what was pushed, `version`, and `built`,
+`false` for a scheduled run that found nothing to build.
+
+A pushed version tag (`v1.2.3` or `1.2.3`) is a release: its image is
+tagged `1.2.3` and `1.2`, and `latest` too with `latest: release`. Any
+other tag is the image's tag as it is. `{version}` in a line of
+`build-args` or `labels` is the release's version without the `v`, else
+the tag, `pr-<number>` or the branch.
+
+```yaml
+    with:
+      latest: release
+      build-args: APP_VERSION=app@{version}
+      # A release may build on GitHub's runners, everything else on the organization's.
+      runner: ${{ startsWith(github.ref, 'refs/tags/') && 'github' || 'self-hosted' }}
+    secrets:
+      # Only a release gets the token: one without a value is not given to the build.
+      build-secrets: |
+        SENTRY_AUTH_TOKEN=${{ startsWith(github.ref, 'refs/tags/') && secrets.SENTRY_AUTH_TOKEN || '' }}
+```
+
+A build secret is in no layer and in no cache. The Dockerfile reads it
+from a file in the one `RUN` that needs it, and that form builds with
+Docker as well:
+
+```dockerfile
+RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
+  SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN 2> /dev/null || true)" pnpm build
+```
+
+Buildah does not know BuildKit's `env=` of a secret mount
+(`--mount=type=secret,id=…,env=…`): a Dockerfile with it fails at that
+`RUN`, also without a secret (Buildah 1.33 and 1.43).
 
 ## astro.yml
 

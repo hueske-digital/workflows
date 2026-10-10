@@ -2,7 +2,8 @@
 # Builds an image with Buildah for one architecture and pushes it: the
 # build step of image.yml and astro.yml, which pass their inputs in the
 # environment (ARCH, IMAGE, CONTEXT, FILE, BUILD_ARGS, LABELS, TAGS, PUSH,
-# RUNNER, SINGLE, FIRST_ARCH, STALE_DAYS, TOKEN and the run's of GitHub).
+# RUNNER, SINGLE, FIRST_ARCH, STALE_DAYS, TOKEN and the run's of GitHub;
+# LATEST and BUILD_SECRETS where a workflow has them).
 # BUILD_CONTEXTS, one name=directory a line, puts a directory in the
 # place of a stage of the Dockerfile, which is then not built. With
 # CHECK_ONLY it ends once it knows whether this run builds (the output
@@ -30,12 +31,39 @@ if [ "$GITHUB_EVENT_NAME" = schedule ] || { [ "$GITHUB_REF_TYPE" = branch ] && [
 elif [ "$GITHUB_REF_TYPE" = tag ]; then
   trusted=tag
 fi
+# What the run builds: a pushed version tag (1.2.3 or v1.2.3) is a release
+# and its version the tag without the v; else the tag, the pull request or
+# the branch.
+release=false minor=''
+if [ "$GITHUB_REF_TYPE" = tag ] && [[ $GITHUB_REF_NAME =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  release=true version=${GITHUB_REF_NAME#v} minor="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+elif [ "$GITHUB_REF_TYPE" = tag ]; then
+  version=$GITHUB_REF_NAME
+elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+  version=pr-${GITHUB_REF_NAME%%/*}
+else
+  version=${GITHUB_REF_NAME//\//-}
+fi
+# Where latest is: on the default branch, or on the newest release, with
+# the default branch under its own name then.
+latest=${LATEST:-branch}
+case $latest in
+  branch | release) ;;
+  *) echo "::error::latest $latest is none of branch and release"; exit 1 ;;
+esac
+# The tag a scheduled run compares with: what the default branch built.
+follows=latest
+[ "$latest" != release ] || follows=$version
 tags=("sha-${sha::7}")
 if [ -n "$TAGS" ]; then
   while IFS= read -r t; do [ -z "$t" ] || tags+=("$t"); done <<< "$TAGS"
-else
-  [ "$trusted" != default ] || tags+=(latest)
-  [ "$trusted" != tag ] || tags+=("$GITHUB_REF_NAME")
+elif [ "$release" = true ]; then
+  tags+=("$version" "$minor")
+  [ "$latest" != release ] || tags+=(latest)
+elif [ "$trusted" = tag ]; then
+  tags+=("$GITHUB_REF_NAME")
+elif [ "$trusted" = default ]; then
+  tags+=("$follows")
 fi
 for t in "${tags[@]}"; do
   # An image tag: letters, digits, _ . - and at most 128 of them.
@@ -44,8 +72,11 @@ for t in "${tags[@]}"; do
     exit 1
   fi
 done
-echo "image=$image" >> "$GITHUB_OUTPUT"
-echo "tags=${tags[*]}" >> "$GITHUB_OUTPUT"
+{
+  echo "image=$image"
+  echo "tags=${tags[*]}"
+  echo "version=$version"
+} >> "$GITHUB_OUTPUT"
 file=${FILE:-$CONTEXT/Dockerfile}
 # Also without push: the cache of a private image is read with it.
 printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
@@ -75,11 +106,11 @@ fi
 # Every architecture reads the same one of latest and the same
 # day, so that all of them build or none.
 if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$PUSH" = true ] && [ -n "$bases" ] && [ "$STALE_DAYS" -gt 0 ]; then
-  latest=$(skopeo inspect --no-tags --override-os linux --override-arch "$FIRST_ARCH" "docker://$image:latest" 2> /dev/null || echo '{}')
-  was=$(jq -r '.Labels["digital.hueske.workflows.bases"] // empty' <<< "$latest")
-  age=$(jq -r '(now / 86400 | floor) - ((.Created // "1970-01-01T00:00:00Z") | sub("\\.[0-9]+"; "") | fromdateiso8601 / 86400 | floor)' <<< "$latest")
+  last=$(skopeo inspect --no-tags --override-os linux --override-arch "$FIRST_ARCH" "docker://$image:$follows" 2> /dev/null || echo '{}')
+  was=$(jq -r '.Labels["digital.hueske.workflows.bases"] // empty' <<< "$last")
+  age=$(jq -r '(now / 86400 | floor) - ((.Created // "1970-01-01T00:00:00Z") | sub("\\.[0-9]+"; "") | fromdateiso8601 / 86400 | floor)' <<< "$last")
   if [ "$was" = "$bases" ] && [ "$age" -lt "$STALE_DAYS" ]; then
-    echo "The base images are unchanged and latest is $age days old: nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
+    echo "The base images are unchanged and $follows is $age days old: nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
     echo "built=false" >> "$GITHUB_OUTPUT"
     exit 0
   fi
@@ -93,13 +124,32 @@ echo "built=true" >> "$GITHUB_OUTPUT"
 args=(--format docker --layers --platform "linux/$ARCH" --file "$file" --cache-from "$image/cache"
   --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
   --label "org.opencontainers.image.revision=$sha")
-while IFS= read -r line; do [ -z "$line" ] || args+=(--build-arg "$line"); done <<< "$BUILD_ARGS"
-while IFS= read -r line; do [ -z "$line" ] || args+=(--label "$line"); done <<< "$LABELS"
+# {version} in a build argument or a label is the version of above.
+while IFS= read -r line; do [ -z "$line" ] || args+=(--build-arg "${line//\{version\}/$version}"); done <<< "$BUILD_ARGS"
+while IFS= read -r line; do [ -z "$line" ] || args+=(--label "${line//\{version\}/$version}"); done <<< "$LABELS"
 [ -z "$bases" ] || args+=(--label "digital.hueske.workflows.bases=$bases")
 while IFS= read -r line; do [ -z "$line" ] || args+=(--build-context "$line"); done <<< "${BUILD_CONTEXTS:-}"
 if [ "$PUSH" = true ] && [ -n "$trusted" ]; then
   args+=(--cache-to "$image/cache")
 fi
+# A build secret, ID=value a line, reaches the build as a file that a RUN
+# of the Dockerfile mounts (--mount=type=secret,id=ID, at /run/secrets/ID)
+# and is in no layer. One without a value is not given. No line of them is
+# ever printed.
+secrets=$(mktemp -d "$RUNNER_TEMP/secrets.XXXXXX")
+trap 'rm -rf "$secrets"' EXIT
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  id=${line%%=*} value=${line#*=}
+  if [[ $line != *=* ]] || ! [[ $id =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]; then
+    echo "::error::a build secret is ID=value, one a line"
+    exit 1
+  fi
+  [ -n "$value" ] || continue
+  echo "::add-mask::$value"
+  (umask 077 && printf '%s' "$value" > "$secrets/$id")
+  args+=(--secret "id=$id,src=$secrets/$id")
+done <<< "${BUILD_SECRETS:-}"
 buildah build "${args[@]}" --tag "$image:build" "$CONTEXT"
 [ "$PUSH" = true ] || exit 0
 if [ "$SINGLE" = true ]; then
