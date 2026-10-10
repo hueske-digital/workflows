@@ -115,6 +115,49 @@ jobs:
       # the job context's workflow_sha, which this actionlint does not know.
       - run: docker run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.7 -color
 
+  # The runner builds first: what it left takes the place of the
+  # Dockerfile's stage, and its pnpm store is in the build.
+  prepared:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: ghcr.io/hueske-digital/workflows/test-prepared
+      archs: '["amd64"]'
+      context: test/prepared
+      node-directory: test/site
+      prepare: |
+        cd test/site
+        pnpm install --frozen-lockfile
+        mkdir -p ../prepared/stage/out
+        echo "the runner $VERSION $(node --version | cut -c1-3) ${PROOF:+with-secret}" > ../prepared/stage/out/built-by
+      build-contexts: build=test/prepared/stage
+      pnpm-store: /pnpm/store
+      push: ${{ github.event_name != 'pull_request' }}
+      runner: github
+    secrets:
+      build-secrets: PROOF=workflows-${{ github.run_id }}
+
+  prepared-run:
+    if: needs.prepared.outputs.built == 'true' && needs.prepared.outputs.digest != ''
+    needs: prepared
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    steps:
+      - shell: bash
+        env:
+          IMAGE: ${{ needs.prepared.outputs.image }}@${{ needs.prepared.outputs.digest }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          got=$(podman run --rm "$IMAGE")
+          echo "$got"
+          [ "$got" = "the runner ${GITHUB_REF_NAME//\//-} v24 with-secret"$'\n'"store" ]
+
   deploy:
     runs-on: ubuntu-26.04
     timeout-minutes: 10

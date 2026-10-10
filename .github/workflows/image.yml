@@ -5,6 +5,10 @@
 #           a single architecture is pushed with its tags
 #   merge   for two: each was pushed as <image>:sha-<commit>-<arch>, and
 #           they become one image with the tags
+# With prepare the runner builds first, with Node and pnpm, and what it
+# built takes the place of stages of the Dockerfile (build-contexts): the
+# build of an application runs once, with the runner's caches, and the
+# Dockerfile still builds alone.
 # A scheduled run builds only when an image of the Dockerfile's FROM lines
 # changed since the last build, or that build is older than stale-days.
 # It builds on the organization's own runners ([self-hosted, buildah]),
@@ -42,6 +46,26 @@ on:
         default: ''
       tags:
         description: Tags besides sha-<commit>, one a line; without it latest on the default branch, and the tag's name for a pushed tag.
+        type: string
+        default: ''
+      prepare:
+        description: Commands the runner runs before the image is built, a script of bash, with Node and pnpm as the project names them and the build secrets in its environment; VERSION is the version.
+        type: string
+        default: ''
+      node-directory:
+        description: With prepare, the directory of the project's package.json and lockfile.
+        type: string
+        default: .
+      node-version-file:
+        description: With prepare, the file that names the Node version, in that directory.
+        type: string
+        default: .nvmrc
+      build-contexts:
+        description: One name=directory a line; the directory takes the place of the Dockerfile's stage of that name, which is then not built.
+        type: string
+        default: ''
+      pnpm-store:
+        description: With prepare, a path in the build at which every RUN finds the runner's pnpm store, so that an install there downloads little.
         type: string
         default: ''
       latest:
@@ -89,11 +113,30 @@ jobs:
     # architecture writes the same image, tags and built, and digest is
     # that of a single one.
     outputs:
-      image: ${{ steps.build.outputs.image }}
-      tags: ${{ steps.build.outputs.tags }}
-      version: ${{ steps.build.outputs.version }}
-      built: ${{ steps.build.outputs.built }}
+      image: ${{ steps.due.outputs.image }}
+      tags: ${{ steps.due.outputs.tags }}
+      version: ${{ steps.due.outputs.version }}
+      built: ${{ steps.due.outputs.built }}
       digest: ${{ steps.build.outputs.digest }}
+    # Every input reaches a script through the environment, never as text
+    # of it.
+    env:
+      ARCH: ${{ matrix.arch }}
+      IMAGE: ${{ inputs.image }}
+      CONTEXT: ${{ inputs.context }}
+      FILE: ${{ inputs.file }}
+      BUILD_ARGS: ${{ inputs.build-args }}
+      LABELS: ${{ inputs.labels }}
+      TAGS: ${{ inputs.tags }}
+      LATEST: ${{ inputs.latest }}
+      PUSH: ${{ inputs.push }}
+      RUNNER: ${{ inputs.runner }}
+      PR_HEAD: ${{ github.event.pull_request.head.sha }}
+      SINGLE: ${{ fromJSON(inputs.archs)[1] == null }}
+      FIRST_ARCH: ${{ fromJSON(inputs.archs)[0] }}
+      STALE_DAYS: ${{ inputs.stale-days }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -102,29 +145,59 @@ jobs:
       - env:
           SCRIPT: https://raw.githubusercontent.com/${{ job.workflow_repository }}/${{ job.workflow_sha }}/scripts/build.sh
         run: curl --fail --silent --show-error --location --retry 3 --max-time 30 --output "$RUNNER_TEMP/build.sh" "$SCRIPT"
-      # Every input reaches the script through the environment, never as
-      # text of it.
-      - id: build
+      # Whether this run builds (a scheduled one may have nothing to do),
+      # and its image, tags and version.
+      - id: due
         shell: bash
         env:
-          ARCH: ${{ matrix.arch }}
-          IMAGE: ${{ inputs.image }}
-          CONTEXT: ${{ inputs.context }}
-          FILE: ${{ inputs.file }}
-          BUILD_ARGS: ${{ inputs.build-args }}
-          LABELS: ${{ inputs.labels }}
-          TAGS: ${{ inputs.tags }}
-          LATEST: ${{ inputs.latest }}
-          BUILD_SECRETS: ${{ secrets.build-secrets }}
-          PUSH: ${{ inputs.push }}
-          RUNNER: ${{ inputs.runner }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          SINGLE: ${{ fromJSON(inputs.archs)[1] == null }}
-          FIRST_ARCH: ${{ fromJSON(inputs.archs)[0] }}
-          STALE_DAYS: ${{ inputs.stale-days }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          TOKEN: ${{ github.token }}
+          CHECK_ONLY: true
         run: bash "$RUNNER_TEMP/build.sh"
+      - if: inputs.prepare != '' && steps.due.outputs.built == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ${{ inputs.node-directory }}/package.json
+      - if: inputs.prepare != '' && steps.due.outputs.built == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node-directory }}/${{ inputs.node-version-file }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.node-directory }}/pnpm-lock.yaml
+      # The caller's own commands, as a run step of its workflow would be:
+      # they reach bash as a file. A build secret is in their environment
+      # under its ID, where that is a name a shell takes.
+      - if: inputs.prepare != '' && steps.due.outputs.built == 'true'
+        shell: bash
+        env:
+          PREPARE: ${{ inputs.prepare }}
+          VERSION: ${{ steps.due.outputs.version }}
+          BUILD_SECRETS: ${{ secrets.build-secrets }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            id=${line%%=*} value=${line#*=}
+            if [[ $line == *=* ]] && [[ $id =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ -n "$value" ]; then
+              echo "::add-mask::$value"
+              export "$id=$value"
+            fi
+          done <<< "$BUILD_SECRETS"
+          unset BUILD_SECRETS line id value
+          printf '%s\n' "$PREPARE" > "$RUNNER_TEMP/prepare.sh"
+          bash -euo pipefail "$RUNNER_TEMP/prepare.sh"
+      - id: build
+        if: steps.due.outputs.built == 'true'
+        shell: bash
+        env:
+          BUILD_SECRETS: ${{ secrets.build-secrets }}
+          BUILD_CONTEXTS: ${{ inputs.build-contexts }}
+          PNPM_STORE: ${{ inputs.prepare != '' && inputs.pnpm-store || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PNPM_STORE" ]; then
+            [[ $PNPM_STORE =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || { echo "::error::pnpm-store $PNPM_STORE is no absolute path"; exit 1; }
+            BUILD_VOLUMES="$(pnpm store path):$PNPM_STORE"
+            export BUILD_VOLUMES
+          fi
+          bash "$RUNNER_TEMP/build.sh"
 
   merge:
     if: inputs.push && fromJSON(inputs.archs)[1] != null && needs.build.outputs.built == 'true'

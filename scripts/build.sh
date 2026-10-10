@@ -4,7 +4,8 @@
 # environment (ARCH, IMAGE, CONTEXT, FILE, BUILD_ARGS, LABELS, TAGS, PUSH,
 # RUNNER, SINGLE, FIRST_ARCH, STALE_DAYS, TOKEN and the run's of GitHub;
 # LATEST and BUILD_SECRETS where a workflow has them).
-# BUILD_CONTEXTS, one name=directory a line, puts a directory in the
+# BUILD_VOLUMES, one directory:path a line, is in every RUN of the build
+# at that path. BUILD_CONTEXTS, one name=directory a line, puts a directory in the
 # place of a stage of the Dockerfile, which is then not built. With
 # CHECK_ONLY it ends once it knows whether this run builds (the output
 # built), before anything is built.
@@ -128,7 +129,15 @@ args=(--format docker --layers --platform "linux/$ARCH" --file "$file" --cache-f
 while IFS= read -r line; do [ -z "$line" ] || args+=(--build-arg "${line//\{version\}/$version}"); done <<< "$BUILD_ARGS"
 while IFS= read -r line; do [ -z "$line" ] || args+=(--label "${line//\{version\}/$version}"); done <<< "$LABELS"
 [ -z "$bases" ] || args+=(--label "digital.hueske.workflows.bases=$bases")
-while IFS= read -r line; do [ -z "$line" ] || args+=(--build-context "$line"); done <<< "${BUILD_CONTEXTS:-}"
+# A directory of the repository is named from its root.
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  name=${line%%=*} dir=${line#*=}
+  case $dir in /*) ;; *) dir=$GITHUB_WORKSPACE/$dir ;; esac
+  [ -d "$dir" ] || { echo "::error::the build context $name is no directory: $dir"; exit 1; }
+  args+=(--build-context "$name=$dir")
+done <<< "${BUILD_CONTEXTS:-}"
+while IFS= read -r line; do [ -z "$line" ] || args+=(--volume "$line"); done <<< "${BUILD_VOLUMES:-}"
 if [ "$PUSH" = true ] && [ -n "$trusted" ]; then
   args+=(--cache-to "$image/cache")
 fi
