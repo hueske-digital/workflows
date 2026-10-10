@@ -95,7 +95,7 @@ if command -v skopeo > /dev/null; then
     [ -z "$stage" ] || stages+="$stage "
     [ "$ref" != scratch ] || continue
     case $ref in *'$'*) list=unknown; break ;; esac
-    list+="$ref@sha256:$(skopeo inspect --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"$'\n'
+    list+="$ref@sha256:$(skopeo inspect --retry-times 3 --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"$'\n'
   done < <(awk 'toupper($1) == "FROM" { ref = ""; stage = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; if (ref == "") { ref = $i; continue } if (toupper($i) == "AS") { stage = $(i + 1); break } } print ref, stage }' "$file")
   if [ "$list" != unknown ]; then
     printf '%s' "$list"
@@ -107,7 +107,7 @@ fi
 # Every architecture reads the same one of latest and the same
 # day, so that all of them build or none.
 if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$PUSH" = true ] && [ -n "$bases" ] && [ "$STALE_DAYS" -gt 0 ]; then
-  last=$(skopeo inspect --no-tags --override-os linux --override-arch "$FIRST_ARCH" "docker://$image:$follows" 2> /dev/null || echo '{}')
+  last=$(skopeo inspect --retry-times 3 --no-tags --override-os linux --override-arch "$FIRST_ARCH" "docker://$image:$follows" 2> /dev/null || echo '{}')
   was=$(jq -r '.Labels["digital.hueske.workflows.bases"] // empty' <<< "$last")
   age=$(jq -r '(now / 86400 | floor) - ((.Created // "1970-01-01T00:00:00Z") | sub("\\.[0-9]+"; "") | fromdateiso8601 / 86400 | floor)' <<< "$last")
   if [ "$was" = "$bases" ] && [ "$age" -lt "$STALE_DAYS" ]; then
