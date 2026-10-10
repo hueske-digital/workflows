@@ -1,8 +1,9 @@
 #!/bin/bash
 # Runs scripts/build.sh with a buildah and a skopeo of its own
-# (no registry, no build) and checks when a run builds: a scheduled one
-# only for a changed base image or a latest of stale-days, every other
-# always; and which images of a Dockerfile count as its bases.
+# (no registry, no build) and checks what it decides: when a run builds (a
+# scheduled one only for a changed base image or an old one), which images
+# of a Dockerfile count as its bases, the tags and where latest is, the
+# version, the layer cache, and that a build secret is a file that goes.
 # Needs jq and GNU date.
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -5,7 +5,7 @@ to deploy a stack's new image: a POST to the stack's deploy hook
 `https://<host>/hooks/deploy-<stack>`, signed like GitHub's webhooks
 (HMAC-SHA256 of the body with the stack's secret, header
 `X-Hub-Signature-256`). A repository calls it as the workflow `deploy.yml`
-(../README.md), which needs no runner of the caller; the action itself is
+([docs/deploy.md](../docs/deploy.md)), which needs no runner of the caller; the action itself is
 a step of a job:
 
 ```yaml

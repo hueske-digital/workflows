@@ -1,8 +1,8 @@
 name: test
 
-# Builds test/ with image.yml on GitHub's runners and runs the result on
+# Builds test/image with image.yml on GitHub's runners and runs the result on
 # both architectures, runs the deploy action against a real webhook, and
-# checks when a scheduled run builds (test/stale.sh), and builds test/site
+# runs the cases of scripts/build.sh (test/build.sh), and builds test/site
 # with astro.yml, whose image must hold the dist/ of the runner. This repository is public: the organization's own
 # runners serve private repositories only, where image.yml takes them.
 on:
@@ -29,7 +29,7 @@ jobs:
       packages: write
     with:
       image: ghcr.io/hueske-digital/workflows/test
-      context: test
+      context: test/image
       build-args: GREETING=built-{version}
       runner: github
       # A pull request builds only.
@@ -167,11 +167,11 @@ jobs:
           persist-credentials: false
       - run: deploy/test/run.sh
 
-  stale:
+  build-script:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - run: test/stale.sh
+      - run: test/build.sh
