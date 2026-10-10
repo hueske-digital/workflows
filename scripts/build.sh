@@ -6,7 +6,9 @@
 # BUILD_CONTEXTS, one name=directory a line, puts a directory in the
 # place of a stage of the Dockerfile, which is then not built. With
 # CHECK_ONLY it ends once it knows whether this run builds (the output
-# built), before anything is built.
+# built), before anything is built. With PUBLISH=false a single
+# architecture is pushed as sha-<commit> only: the caller gives it the
+# other tags of the output tags later.
 set -euo pipefail
 case $ARCH in
   amd64 | arm64) ;;
@@ -103,6 +105,7 @@ fi
 buildah build "${args[@]}" --tag "$image:build" "$CONTEXT"
 [ "$PUSH" = true ] || exit 0
 if [ "$SINGLE" = true ]; then
+  [ "${PUBLISH:-true}" = true ] || tags=("${tags[0]}")
   for t in "${tags[@]}"; do
     buildah push --digestfile "$RUNNER_TEMP/digest" "$image:build" "docker://$image:$t"
   done
