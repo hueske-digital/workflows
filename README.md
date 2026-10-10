@@ -36,6 +36,12 @@ architecture is built on a runner of its own; two are joined into one
 image by a second job, one is pushed with its tags by the build itself.
 The layers are cached in the repository `<image>/cache` of the registry.
 
+With a `schedule` of the caller the image follows its base images: a
+scheduled run builds only when an image of the Dockerfile's `FROM` lines
+changed since the last build (their digests are kept in a label of the
+image) or `latest` is `stale-days` old, for the packages a Dockerfile
+installs. Every other run builds.
+
 There is no Docker daemon: a Dockerfile builds as Buildah builds it.
 
 | Input | Default | |
@@ -48,9 +54,11 @@ There is no Docker daemon: a Dockerfile builds as Buildah builds it.
 | `labels` | | one `name=value` a line |
 | `tags` | | tags besides `sha-<commit>`, one a line, instead of the defaults |
 | `push` | `true` | `false` builds only, as for a pull request |
+| `stale-days` | `7` | a scheduled run builds a `latest` of that age; `0` builds every run |
 | `runner` | `auto` | `self-hosted`, `github` or `auto` |
 
-Outputs: `image`, and `digest` of what was pushed.
+Outputs: `image`, `digest` of what was pushed, and `built`, `false` for a
+scheduled run that found nothing to build.
 
 ## deploy.yml
 

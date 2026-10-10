@@ -7,6 +7,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A scheduled run finds nothing to build while the base image is the
+  # same and latest is young.
+  schedule:
+    - cron: '23 4 * * *'
 
 permissions:
   contents: read
@@ -25,9 +29,11 @@ jobs:
       image: ghcr.io/hueske-digital/workflows/test
       context: test
       build-args: GREETING=built
-      tags: test
+      # A pull request builds only.
+      push: ${{ github.event_name != 'pull_request' }}
 
   run:
+    if: needs.image.outputs.built == 'true' && needs.image.outputs.digest != ''
     needs: image
     strategy:
       matrix:

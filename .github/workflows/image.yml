@@ -4,6 +4,8 @@
 #           <image>/cache; a single architecture is pushed with its tags
 #   merge   for two: each was pushed as <image>:sha-<commit>-<arch>, and
 #           they become one image with the tags
+# A scheduled run builds only when an image of the Dockerfile's FROM lines
+# changed since the last build, or that build is older than stale-days.
 # A private repository builds on the organization's own runners
 # ([self-hosted, buildah]), a public one on GitHub's. The caller grants
 # contents: read and, to push, packages: write (README.md).
@@ -44,6 +46,10 @@ on:
         description: false builds without pushing, as for a pull request.
         type: boolean
         default: true
+      stale-days:
+        description: A scheduled run builds when a base image changed or latest is this many days old; 0 builds every run.
+        type: number
+        default: 7
       runner:
         description: self-hosted, github, or auto, which takes the organization's runners for a private repository.
         type: string
@@ -52,6 +58,9 @@ on:
       image:
         description: The image without a tag.
         value: ${{ jobs.build.outputs.image }}
+      built:
+        description: false for a scheduled run that found nothing to build.
+        value: ${{ jobs.build.outputs.built }}
       digest:
         description: The digest of the pushed image (the index of two architectures), empty without push.
         value: ${{ jobs.merge.outputs.digest || jobs.build.outputs.digest }}
@@ -68,6 +77,7 @@ jobs:
     outputs:
       image: ${{ steps.build.outputs.image }}
       tags: ${{ steps.build.outputs.tags }}
+      built: ${{ steps.build.outputs.built }}
       digest: ${{ steps.build.outputs.digest }}
       amd64: ${{ steps.build.outputs.amd64 }}
       arm64: ${{ steps.build.outputs.arm64 }}
@@ -89,6 +99,8 @@ jobs:
           TAGS: ${{ inputs.tags }}
           PUSH: ${{ inputs.push }}
           SINGLE: ${{ fromJSON(inputs.archs)[1] == null }}
+          FIRST_ARCH: ${{ fromJSON(inputs.archs)[0] }}
+          STALE_DAYS: ${{ inputs.stale-days }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           TOKEN: ${{ github.token }}
         run: |
@@ -121,15 +133,53 @@ jobs:
           done
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "tags=${tags[*]}" >> "$GITHUB_OUTPUT"
-          args=(--layers --platform "linux/$ARCH" --file "${FILE:-$CONTEXT/Dockerfile}"
+          file=${FILE:-$CONTEXT/Dockerfile}
+          if [ "$PUSH" = true ]; then
+            printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          fi
+          # One hash over the digest of every image the Dockerfile builds
+          # FROM, kept as a label: a scheduled run compares it with the
+          # label of latest. A digest is the hash of what the tag names
+          # (the index of an image for several platforms). A FROM that
+          # names an earlier stage is none, and one with a variable is not
+          # known here: such a Dockerfile is built by every run.
+          bases=''
+          if command -v skopeo > /dev/null; then
+            list='' stages=' '
+            while read -r ref stage; do
+              case "$stages" in *" $ref "*) continue ;; esac
+              [ -z "$stage" ] || stages+="$stage "
+              [ "$ref" != scratch ] || continue
+              case $ref in *'$'*) list=unknown; break ;; esac
+              list+="$ref@sha256:$(skopeo inspect --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"$'\n'
+            done < <(awk 'toupper($1) == "FROM" { ref = ""; stage = ""; for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; if (ref == "") { ref = $i; continue } if (toupper($i) == "AS") { stage = $(i + 1); break } } print ref, stage }' "$file")
+            if [ "$list" != unknown ]; then
+              printf '%s' "$list"
+              bases=$(printf '%s' "$list" | sha256sum | cut -d' ' -f1)
+            fi
+          else
+            echo "::warning::no skopeo on this runner: the base images are not recorded"
+          fi
+          # Every architecture reads the same one of latest and the same
+          # day, so that all of them build or none.
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$PUSH" = true ] && [ -n "$bases" ] && [ "$STALE_DAYS" -gt 0 ]; then
+            latest=$(skopeo inspect --no-tags --override-os linux --override-arch "$FIRST_ARCH" "docker://$image:latest" 2> /dev/null || echo '{}')
+            was=$(jq -r '.Labels["digital.hueske.workflows.bases"] // empty' <<< "$latest")
+            age=$(jq -r '(now / 86400 | floor) - ((.Created // "1970-01-01T00:00:00Z") | sub("\\.[0-9]+"; "") | fromdateiso8601 / 86400 | floor)' <<< "$latest")
+            if [ "$was" = "$bases" ] && [ "$age" -lt "$STALE_DAYS" ]; then
+              echo "The base images are unchanged and latest is $age days old: nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "built=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "built=true" >> "$GITHUB_OUTPUT"
+          args=(--layers --platform "linux/$ARCH" --file "$file"
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
             --label "org.opencontainers.image.revision=$GITHUB_SHA")
           while IFS= read -r line; do [ -z "$line" ] || args+=(--build-arg "$line"); done <<< "$BUILD_ARGS"
           while IFS= read -r line; do [ -z "$line" ] || args+=(--label "$line"); done <<< "$LABELS"
-          if [ "$PUSH" = true ]; then
-            printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-            args+=(--cache-from "$image/cache" --cache-to "$image/cache")
-          fi
+          [ -z "$bases" ] || args+=(--label "digital.hueske.workflows.bases=$bases")
+          [ "$PUSH" != true ] || args+=(--cache-from "$image/cache" --cache-to "$image/cache")
           buildah build "${args[@]}" --tag "$image:build" "$CONTEXT"
           [ "$PUSH" = true ] || exit 0
           if [ "$SINGLE" = true ]; then
@@ -144,7 +194,7 @@ jobs:
           fi
 
   merge:
-    if: inputs.push && fromJSON(inputs.archs)[1] != null
+    if: inputs.push && fromJSON(inputs.archs)[1] != null && needs.build.outputs.built == 'true'
     needs: build
     runs-on: ${{ (inputs.runner == 'self-hosted' || (inputs.runner == 'auto' && github.event.repository.private)) && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
     timeout-minutes: 10
@@ -162,9 +212,13 @@ jobs:
           set -euo pipefail
           printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
           buildah manifest create merged
+          n=0
           for digest in $DIGESTS; do
             buildah manifest add merged "docker://$IMAGE@$digest"
+            n=$((n + 1))
           done
+          # One architecture found nothing to build and the other built.
+          [ "$n" = 2 ] || { echo "::error::$n of 2 architectures were pushed: run it again"; exit 1; }
           for t in $TAGS; do
             buildah manifest push --all --digestfile "$RUNNER_TEMP/digest" merged "docker://$IMAGE:$t"
           done
