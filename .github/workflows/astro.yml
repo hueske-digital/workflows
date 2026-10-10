@@ -67,6 +67,10 @@ on:
         description: Tags besides sha-<commit>, one a line; without it latest on the default branch, and the tag's name for a pushed tag.
         type: string
         default: ''
+      layer-cache:
+        description: none builds the image without a layer cache in the registry, which is faster for a site's Dockerfile; registry keeps one, for a Dockerfile with a RUN that takes long.
+        type: string
+        default: none
       push:
         description: false checks and builds without pushing, as for a pull request.
         type: boolean
@@ -108,6 +112,7 @@ jobs:
       BUILD_ARGS: ${{ inputs.build-args }}
       LABELS: ${{ inputs.labels }}
       TAGS: ${{ inputs.tags }}
+      CACHE: ${{ inputs.layer-cache }}
       PUSH: ${{ inputs.push }}
       RUNNER: ${{ inputs.runner }}
       PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -157,10 +162,32 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version-file: ${{ inputs.directory }}/${{ inputs.node-version-file }}
-          cache: pnpm
-          cache-dependency-path: ${{ inputs.directory }}/pnpm-lock.yaml
+      # pnpm's store, kept between runs under the lockfile's hash; a changed
+      # lockfile starts from the newest store before it. Only the default
+      # branch saves one, so that a pull request uploads nothing.
+      - id: store
+        if: steps.due.outputs.built == 'true'
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+      - id: pnpm-cache
+        if: steps.due.outputs.built == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}
+          restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
       - if: steps.due.outputs.built == 'true'
         run: pnpm install --frozen-lockfile
+      - if: steps.due.outputs.built == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+        run: pnpm store prune
+      - if: steps.due.outputs.built == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - if: steps.due.outputs.built == 'true'
         env:
           CHECKS: ${{ inputs.checks }}
@@ -172,10 +199,11 @@ jobs:
             echo "::endgroup::"
           done
       # Converted images and fonts: without it every run computes all of
-      # them again. A run saves under its own key and starts from the
-      # newest one before it.
-      - if: steps.due.outputs.built == 'true'
-        uses: actions/cache@v6
+      # them again. A run starts from the newest one before it; only the
+      # default branch saves, under the run's own key.
+      - id: astro-cache
+        if: steps.due.outputs.built == 'true'
+        uses: actions/cache/restore@v6
         with:
           path: ${{ inputs.directory }}/${{ inputs.cache }}
           key: astro-${{ inputs.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}-${{ github.run_id }}
@@ -184,6 +212,11 @@ jobs:
             astro-${{ inputs.arch }}-
       - if: steps.due.outputs.built == 'true'
         run: pnpm run build
+      - if: steps.due.outputs.built == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ inputs.directory }}/${{ inputs.cache }}
+          key: ${{ steps.astro-cache.outputs.cache-primary-key }}
       - if: steps.due.outputs.built == 'true'
         env:
           CHECKS: ${{ inputs.checks-after }}

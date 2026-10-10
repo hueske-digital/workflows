@@ -122,7 +122,18 @@ echo "built=true" >> "$GITHUB_OUTPUT"
 # HEALTHCHECK and runs no RUN with its SHELL. The cache is read
 # by every build and written by those of the default branch and
 # of tags only: a step in it is used by every later build.
-args=(--format docker --layers --platform "linux/$ARCH" --file "$file" --cache-from "$image/cache"
+# CACHE=registry keeps a layer for every instruction and reads and writes
+# them in the registry: worth it for a RUN that takes long. Each instruction
+# then costs a comparison of the whole file tree and a pull or a push of its
+# own, so that CACHE=none, one layer for the stage and no registry, is
+# faster for a Dockerfile whose stages copy and configure.
+cache=${CACHE:-registry}
+case $cache in
+  registry) args=(--layers --cache-from "$image/cache") ;;
+  none) args=(--layers=false) ;;
+  *) echo "::error::cache $cache is none of registry and none"; exit 1 ;;
+esac
+args+=(--format docker --platform "linux/$ARCH" --file "$file"
   --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
   --label "org.opencontainers.image.revision=$sha")
 # {version} in a build argument or a label is the version of above.
@@ -138,7 +149,7 @@ while IFS= read -r line; do
   args+=(--build-context "$name=$dir")
 done <<< "${BUILD_CONTEXTS:-}"
 while IFS= read -r line; do [ -z "$line" ] || args+=(--volume "$line"); done <<< "${BUILD_VOLUMES:-}"
-if [ "$PUSH" = true ] && [ -n "$trusted" ]; then
+if [ "$cache" = registry ] && [ "$PUSH" = true ] && [ -n "$trusted" ]; then
   args+=(--cache-to "$image/cache")
 fi
 # A build secret, ID=value a line, reaches the build as a file that a RUN

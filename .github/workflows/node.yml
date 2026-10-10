@@ -61,9 +61,29 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: ${{ inputs.directory }}/${{ inputs.node-version-file }}
-          cache: pnpm
-          cache-dependency-path: ${{ inputs.directory }}/pnpm-lock.yaml
+      # pnpm's store, kept between runs under the lockfile's hash; a changed
+      # lockfile starts from the newest store before it. Only the default
+      # branch saves one, so that a pull request uploads nothing.
+      - id: store
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+      - id: pnpm-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}
+          restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
       - run: pnpm install --frozen-lockfile
+      - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+        run: pnpm store prune
+      - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       # The caller's own commands, as a run step of its workflow would be:
       # they reach bash as a file, not as text of this script.
       - env:

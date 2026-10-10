@@ -40,7 +40,7 @@ run() {
     GITHUB_EVENT_NAME="$1" STALE_DAYS="$2" GITHUB_REPOSITORY=hueske-digital/demo GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 \
     GITHUB_REF_TYPE="${REF_TYPE:-branch}" GITHUB_REF_NAME="${REF_NAME:-main}" DEFAULT_BRANCH=main GITHUB_ACTOR=test GITHUB_SERVER_URL=https://github.com \
     ARCH=amd64 FIRST_ARCH=amd64 SINGLE=true RUNNER=github PUSH=true TOKEN=t IMAGE= CONTEXT="$work/ctx" FILE= BUILD_ARGS="${ARGS:-}" LABELS= TAGS= PR_HEAD= \
-    LATEST="${LATEST_ON:-branch}" BUILD_SECRETS="${SECRETS:-}" \
+    LATEST="${LATEST_ON:-branch}" BUILD_SECRETS="${SECRETS:-}" CACHE="${CACHE_IN:-registry}" \
     BASE_VERSION="${BASE_VERSION:-1}" STUB_LATEST="${STUB_LATEST:-}" bash "$work/step.sh" > "$work/stdout" 2>&1 || [ -n "${MAY_FAIL:-}" ] || { echo "FAILED: the step ended with $?"; cat "$work/stdout"; failed=1; }
 }
 # expect <name> <built>: the output built, and a build exactly when it is true.
@@ -85,6 +85,27 @@ if grep -q 'docker://ghcr.io/hueske-digital/demo:main$' "$work/log"; then
   echo "ok: scheduled, latest on releases: compared with the branch's tag"
 else
   echo "FAILED: $(grep '^skopeo inspect .*--no-tags' "$work/log")"; failed=1;
+fi
+
+# The layer cache: every instruction a layer and the registry asked and
+# written, or one layer a stage and no registry.
+run push 7
+if grep -q -- '^buildah build --layers --cache-from ghcr.io/hueske-digital/demo/cache .*--cache-to ghcr.io/hueske-digital/demo/cache' "$work/log"; then
+  echo "ok: the registry cache is read and, on the default branch, written"
+else
+  echo "FAILED: $(grep '^buildah build' "$work/log")"; failed=1
+fi
+REF_NAME=feature/x run push 7
+if grep -q -- '--cache-from' "$work/log" && ! grep -q -- '--cache-to' "$work/log"; then
+  echo "ok: another branch reads the registry cache only"
+else
+  echo "FAILED: $(grep '^buildah build' "$work/log")"; failed=1
+fi
+CACHE_IN=none run push 7
+if grep -q -- '^buildah build --layers=false ' "$work/log" && ! grep -q -- '--cache-' "$work/log"; then
+  echo "ok: without a layer cache"
+else
+  echo "FAILED: $(grep '^buildah build' "$work/log")"; failed=1
 fi
 
 # {version} in a build argument.

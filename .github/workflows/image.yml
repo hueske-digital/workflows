@@ -68,6 +68,10 @@ on:
         description: With prepare, a path in the build at which every RUN finds the runner's pnpm store, so that an install there downloads little.
         type: string
         default: ''
+      cache:
+        description: registry keeps a layer for every instruction in the registry, for a Dockerfile with a RUN that takes long; none builds one layer a stage without it, which is faster where stages only copy and configure.
+        type: string
+        default: registry
       latest:
         description: branch, where latest is the default branch, or release, where it is the newest pushed version tag and the default branch has its own name as its tag.
         type: string
@@ -129,6 +133,7 @@ jobs:
       LABELS: ${{ inputs.labels }}
       TAGS: ${{ inputs.tags }}
       LATEST: ${{ inputs.latest }}
+      CACHE: ${{ inputs.cache }}
       PUSH: ${{ inputs.push }}
       RUNNER: ${{ inputs.runner }}
       PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -160,8 +165,21 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version-file: ${{ inputs.node-directory }}/${{ inputs.node-version-file }}
-          cache: pnpm
-          cache-dependency-path: ${{ inputs.node-directory }}/pnpm-lock.yaml
+      # pnpm's store, kept between runs under the lockfile's hash; a changed
+      # lockfile starts from the newest store before it. Only the default
+      # branch saves one, so that a pull request uploads nothing.
+      - id: store
+        if: inputs.prepare != '' && steps.due.outputs.built == 'true'
+        shell: bash
+        working-directory: ${{ inputs.node-directory }}
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+      - id: pnpm-cache
+        if: inputs.prepare != '' && steps.due.outputs.built == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.node-directory)) }}
+          restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
       # The caller's own commands, as a run step of its workflow would be:
       # they reach bash as a file. A build secret is in their environment
       # under its ID, where that is a name a shell takes.
@@ -183,6 +201,15 @@ jobs:
           unset BUILD_SECRETS line id value
           printf '%s\n' "$PREPARE" > "$RUNNER_TEMP/prepare.sh"
           bash -euo pipefail "$RUNNER_TEMP/prepare.sh"
+      - if: inputs.prepare != '' && steps.due.outputs.built == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: ${{ inputs.node-directory }}
+        run: pnpm store prune
+      - if: inputs.prepare != '' && steps.due.outputs.built == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
       - id: build
         if: steps.due.outputs.built == 'true'
         shell: bash
