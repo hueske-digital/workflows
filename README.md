@@ -75,6 +75,11 @@ cache's steps stay.
 | `build-args` | | one `NAME=value` a line |
 | `labels` | | one `name=value` a line |
 | `tags` | | tags besides `sha-<commit>`, one a line, instead of the defaults |
+| `prepare` | | commands the runner runs before the image is built, a script of bash |
+| `node-directory` | `.` | with `prepare`, the directory of `package.json` and the lockfile |
+| `node-version-file` | `.nvmrc` | with `prepare`, names the Node version, in that directory |
+| `build-contexts` | | one `name=directory` a line: the directory takes the place of the Dockerfile's stage of that name |
+| `pnpm-store` | | with `prepare`, a path in the build where every `RUN` finds the runner's pnpm store |
 | `latest` | `branch` | `release` puts `latest` on the newest pushed version tag and gives the default branch its own name as its tag |
 | `push` | `true` | `false` builds only, as for a pull request |
 | `stale-days` | `30` | a scheduled run builds a `latest` of that age; `0` builds every run |
@@ -101,6 +106,26 @@ the tag, `pr-<number>` or the branch.
       # Only a release gets the token: one without a value is not given to the build.
       build-secrets: |
         SENTRY_AUTH_TOKEN=${{ startsWith(github.ref, 'refs/tags/') && secrets.SENTRY_AUTH_TOKEN || '' }}
+```
+
+With `prepare` an application is built once, on the runner, where pnpm's
+store and other caches survive between runs: the runner gets Node and
+pnpm as the project names them and runs the commands, with `VERSION` and
+the build secrets in their environment. `build-contexts` then puts what
+they left in the place of stages of the Dockerfile, which are not built,
+and the Dockerfile still builds alone. What must be made for the image's
+own system (dependencies with native code) stays in a stage of the
+Dockerfile; with `pnpm-store` its install finds the runner's store and
+downloads only what that lacks.
+
+```yaml
+    with:
+      prepare: |
+        pnpm install --frozen-lockfile
+        pnpm build
+        scripts/assemble.sh stage/out
+      build-contexts: build=stage
+      pnpm-store: /pnpm/store
 ```
 
 A build secret is in no layer and in no cache. The Dockerfile reads it
