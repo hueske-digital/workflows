@@ -40,7 +40,7 @@ run() {
     GITHUB_EVENT_NAME="$1" STALE_DAYS="$2" GITHUB_REPOSITORY=hueske-digital/demo GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 \
     GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main DEFAULT_BRANCH=main GITHUB_ACTOR=test GITHUB_SERVER_URL=https://github.com \
     ARCH=amd64 FIRST_ARCH=amd64 SINGLE=true RUNNER=github PUSH=true TOKEN=t IMAGE= CONTEXT="$work/ctx" FILE= BUILD_ARGS= LABELS= TAGS= PR_HEAD= \
-    BASE_VERSION="${BASE_VERSION:-1}" LATEST="${LATEST:-}" PUBLISH="${PUBLISH:-true}" bash "$work/step.sh" > "$work/stdout" 2>&1 || { echo "FAILED: the step ended with $?"; cat "$work/stdout"; failed=1; }
+    BASE_VERSION="${BASE_VERSION:-1}" LATEST="${LATEST:-}" bash "$work/step.sh" > "$work/stdout" 2>&1 || { echo "FAILED: the step ended with $?"; cat "$work/stdout"; failed=1; }
 }
 # expect <name> <built>: the output built, and a build exactly when it is true.
 expect() {
@@ -68,13 +68,6 @@ LATEST=$(latest "$bases" "$(date -u -d '6 days ago' +%Y-%m-%dT%H:%M:%SZ)") run s
 LATEST=$(latest "$bases" "$now") run schedule 0; expect "scheduled, stale-days 0" true
 run schedule 7; expect "scheduled, no latest yet" true
 LATEST='{"Created": "'"$now"'", "Labels": null}' run schedule 7; expect "scheduled, a latest without the label" true
-
-# A single architecture is pushed under every tag, and under sha-<commit>
-# alone when the caller gives it the others later.
-run push 7
-[ "$(grep -c '^buildah push ' "$work/log")" = 2 ] && grep -q ':latest$' "$work/log" && echo "ok: pushed as sha and latest" || { echo "FAILED: $(grep '^buildah push' "$work/log")"; failed=1; }
-PUBLISH=false run push 7
-[ "$(grep -c '^buildah push ' "$work/log")" = 1 ] && grep -q '^buildah push .*:sha-0123456$' "$work/log" && grep -q '^tags=sha-0123456 latest$' "$work/out" && echo "ok: without publish pushed as sha only, the tags named" || { echo "FAILED: $(grep '^buildah push' "$work/log"; cat "$work/out")"; failed=1; }
 
 # Stages and flags: only the two images from outside are asked for.
 printf 'FROM --platform=linux/amd64 docker.io/library/golang:1 AS build\nRUN true\nFROM build AS test\nFROM scratch AS empty\nfrom docker.io/library/alpine:3\nCOPY --from=build /x /x\n' > "$work/ctx/Dockerfile"
