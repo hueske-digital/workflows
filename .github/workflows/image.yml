@@ -1,0 +1,172 @@
+# Builds a repository's image with Buildah, each architecture on a runner
+# of its own, and joins them into one image on ghcr.io:
+#   build   one job per architecture, its layers cached in the repository
+#           <image>/cache; a single architecture is pushed with its tags
+#   merge   for two: each was pushed as <image>:sha-<commit>-<arch>, and
+#           they become one image with the tags
+# A private repository builds on the organization's own runners
+# ([self-hosted, buildah]), a public one on GitHub's. The caller grants
+# contents: read and, to push, packages: write (README.md).
+name: image
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: The image without a tag; ghcr.io/<owner>/<repository> in lower case without it.
+        type: string
+        default: ''
+      archs:
+        description: A JSON list of amd64 and arm64.
+        type: string
+        default: '["amd64", "arm64"]'
+      context:
+        description: The build context, a directory of the repository.
+        type: string
+        default: .
+      file:
+        description: The Dockerfile, from the repository's root; Dockerfile of the context without it.
+        type: string
+        default: ''
+      build-args:
+        description: One NAME=value a line.
+        type: string
+        default: ''
+      labels:
+        description: One name=value a line, besides the source and the revision.
+        type: string
+        default: ''
+      tags:
+        description: Tags besides sha-<commit>, one a line; without it latest on the default branch, and the tag's name for a pushed tag.
+        type: string
+        default: ''
+      push:
+        description: false builds without pushing, as for a pull request.
+        type: boolean
+        default: true
+      runner:
+        description: self-hosted, github, or auto, which takes the organization's runners for a private repository.
+        type: string
+        default: auto
+    outputs:
+      image:
+        description: The image without a tag.
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        description: The digest of the pushed image (the index of two architectures), empty without push.
+        value: ${{ jobs.merge.outputs.digest || jobs.build.outputs.digest }}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        arch: ${{ fromJSON(inputs.archs) }}
+    runs-on: ${{ (inputs.runner == 'self-hosted' || (inputs.runner == 'auto' && github.event.repository.private)) && fromJSON(format('["self-hosted", "buildah", "{0}"]', matrix.arch == 'arm64' && 'ARM64' || 'X64')) || (matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04') }}
+    timeout-minutes: 45
+    # A matrix job's outputs are one set: each architecture writes its own
+    # digest, and the same image and tags.
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+      tags: ${{ steps.build.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+      amd64: ${{ steps.build.outputs.amd64 }}
+      arm64: ${{ steps.build.outputs.arm64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Every input reaches the shell through the environment, never as
+      # text of the script.
+      - id: build
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE: ${{ inputs.image }}
+          CONTEXT: ${{ inputs.context }}
+          FILE: ${{ inputs.file }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+          LABELS: ${{ inputs.labels }}
+          TAGS: ${{ inputs.tags }}
+          PUSH: ${{ inputs.push }}
+          SINGLE: ${{ fromJSON(inputs.archs)[1] == null }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case $ARCH in
+            amd64 | arm64) ;;
+            *) echo "::error::arch $ARCH is none of amd64 and arm64"; exit 1 ;;
+          esac
+          image=${IMAGE:-ghcr.io/${GITHUB_REPOSITORY,,}}
+          if ! [[ $image =~ ^ghcr\.io/[a-z0-9._/-]+$ ]]; then
+            echo "::error::image $image is not a lower-case name on ghcr.io without a tag"
+            exit 1
+          fi
+          tags=("sha-${GITHUB_SHA::7}")
+          if [ -n "$TAGS" ]; then
+            while IFS= read -r t; do [ -z "$t" ] || tags+=("$t"); done <<< "$TAGS"
+          else
+            # A scheduled run is one of the default branch.
+            if [ "$GITHUB_EVENT_NAME" = schedule ] || { [ "$GITHUB_REF_TYPE" = branch ] && [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; }; then
+              tags+=(latest)
+            fi
+            [ "$GITHUB_REF_TYPE" != tag ] || tags+=("$GITHUB_REF_NAME")
+          fi
+          for t in "${tags[@]}"; do
+            # An image tag: letters, digits, _ . - and at most 128 of them.
+            if ! [[ $t =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::$t is no image tag"
+              exit 1
+            fi
+          done
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "tags=${tags[*]}" >> "$GITHUB_OUTPUT"
+          args=(--layers --platform "linux/$ARCH" --file "${FILE:-$CONTEXT/Dockerfile}"
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            --label "org.opencontainers.image.revision=$GITHUB_SHA")
+          while IFS= read -r line; do [ -z "$line" ] || args+=(--build-arg "$line"); done <<< "$BUILD_ARGS"
+          while IFS= read -r line; do [ -z "$line" ] || args+=(--label "$line"); done <<< "$LABELS"
+          if [ "$PUSH" = true ]; then
+            printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+            args+=(--cache-from "$image/cache" --cache-to "$image/cache")
+          fi
+          buildah build "${args[@]}" --tag "$image:build" "$CONTEXT"
+          [ "$PUSH" = true ] || exit 0
+          if [ "$SINGLE" = true ]; then
+            for t in "${tags[@]}"; do
+              buildah push --digestfile "$RUNNER_TEMP/digest" "$image:build" "docker://$image:$t"
+            done
+            echo "digest=$(cat "$RUNNER_TEMP/digest")" >> "$GITHUB_OUTPUT"
+            echo "$image@$(cat "$RUNNER_TEMP/digest") as ${tags[*]}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            buildah push --digestfile "$RUNNER_TEMP/digest" "$image:build" "docker://$image:sha-${GITHUB_SHA::7}-$ARCH"
+            echo "$ARCH=$(cat "$RUNNER_TEMP/digest")" >> "$GITHUB_OUTPUT"
+          fi
+
+  merge:
+    if: inputs.push && fromJSON(inputs.archs)[1] != null
+    needs: build
+    runs-on: ${{ (inputs.runner == 'self-hosted' || (inputs.runner == 'auto' && github.event.repository.private)) && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.merge.outputs.digest }}
+    steps:
+      - id: merge
+        shell: bash
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          TAGS: ${{ needs.build.outputs.tags }}
+          DIGESTS: ${{ needs.build.outputs.amd64 }} ${{ needs.build.outputs.arm64 }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | buildah login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          buildah manifest create merged
+          for digest in $DIGESTS; do
+            buildah manifest add merged "docker://$IMAGE@$digest"
+          done
+          for t in $TAGS; do
+            buildah manifest push --all --digestfile "$RUNNER_TEMP/digest" merged "docker://$IMAGE:$t"
+          done
+          echo "digest=$(cat "$RUNNER_TEMP/digest")" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE@$(cat "$RUNNER_TEMP/digest") as $TAGS" >> "$GITHUB_STEP_SUMMARY"

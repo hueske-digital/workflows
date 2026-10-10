@@ -1,0 +1,47 @@
+name: test
+
+# Builds test/ with image.yml on GitHub's runners and runs the result on
+# both architectures. This repository is public: the organization's own
+# runners serve private repositories only, where image.yml takes them.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: ghcr.io/hueske-digital/workflows/test
+      context: test
+      build-args: GREETING=built
+      tags: test
+
+  run:
+    needs: image
+    strategy:
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    steps:
+      - shell: bash
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          [ "$(podman run --rm "$IMAGE")" = built ]
