@@ -96,7 +96,9 @@ and, with `health-url`, waits until the stack's page tells the new version
 | `stack` | | the stack's name in the host's list |
 | `health-url` | | a page of the stack that tells its version |
 | `health-json` | | the fields it must answer with; `"{commit}"` is the run's commit |
-| `health-timeout` | `600` | seconds before the job fails |
+| `health-timeout` | `600` | seconds before the job fails, 1500 at most |
 | `runner` | `self-hosted` | `github` for a public repository |
 
-Secret: `secret`, the stack's deploy secret.
+Secret: `secret`, the stack's deploy secret. Deploys of one stack run one
+after another. Only a `health-json` with `"{commit}"` shows that the new
+version runs.

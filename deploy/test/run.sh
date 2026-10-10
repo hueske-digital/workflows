@@ -53,6 +53,11 @@ expect() {
 }
 host=localhost:9000
 expect ok "right secret" "$host" demo "$secret"
+# The hook answers before its command ran.
+for _ in $(seq 20); do
+  docker exec deploy-action-test test -e /tmp/deploy-demo && break
+  sleep 0.1
+done
 docker exec deploy-action-test test -e /tmp/deploy-demo || { echo "FAILED: no marker"; failed=1; }
 expect ok "127.0.0.1" 127.0.0.1:9000 demo "$secret"
 expect fail "wrong secret" "$host" demo "$(openssl rand -hex 32)"
@@ -102,6 +107,7 @@ with_health fail "health-url over http elsewhere" "http://example.org/api/health
 with_health fail "health-json no object" "$health" '[1]' 30
 with_health fail "health-json no JSON" "$health" '{status' 30
 with_health fail "health-timeout no number" "$health" "$json" soon
+with_health fail "health-timeout longer than the job" "$health" "$json" 2000
 with_health fail "health-json without health-url" "" "$json" 30
 if docker exec deploy-action-test test -e /tmp/deploy-demo; then
   echo "FAILED: a mistake in the health inputs called the hook"

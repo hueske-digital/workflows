@@ -71,3 +71,26 @@ jobs:
         with:
           persist-credentials: false
       - run: test/stale.sh
+
+  # deploy.yml itself, up to the action's check of its inputs: a mistake
+  # there fails before any hook is called.
+  deploy-workflow:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      host: localhost
+      stack: demo
+      health-url: https://example.invalid/health
+      health-json: not json
+      runner: github
+    secrets:
+      secret: 0123456789abcdef0123456789abcdef
+
+  deploy-workflow-refused:
+    if: always()
+    needs: deploy-workflow
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULT: ${{ needs.deploy-workflow.result }}
+        run: '[ "$RESULT" = failure ]'

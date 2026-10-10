@@ -15,11 +15,11 @@ inputs:
     required: false
     default: ''
   health-json:
-    description: 'The fields health-url must answer with, as a JSON object; "{commit}" stands for the run''s commit (its first 7 characters or more). Without it, the page must answer 200.'
+    description: 'The fields health-url must answer with, as a JSON object; "{commit}" stands for the run''s commit (its first 7 characters or more). Without it, the page must answer 200, which the version that runs now does as well.'
     required: false
     default: ''
   health-timeout:
-    description: How many seconds health-url is asked before the step fails.
+    description: How many seconds health-url is asked before the step fails, 1500 at most.
     required: false
     default: '600'
 runs:

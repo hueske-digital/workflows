@@ -41,7 +41,12 @@ few minutes, as the host pulls the image and waits for its health check.
 with that value, and may hold more (`builtAt`, `uptimeSeconds`). The value
 `"{commit}"` stands for the commit of the run: it matches its first 7
 characters or more, as a site that tells the commit it was built from
-writes it. Without `health-json` the page only has to answer 200.
+writes it. Without `health-json`, or with one that names no `"{commit}"`,
+the page only has to answer, which the version that runs now does as
+well: the step warns that it shows nothing about the new one. `{commit}`
+is the commit of the run that calls the action. A redirect is not
+followed (a page behind a login answers with one), and `health-timeout`
+is 1500 at most.
 `health-url` is https, plain http only to this machine, as for `host`; a
 mistake in these inputs fails the step before the hook is called.
 
@@ -64,3 +69,9 @@ none of it.
 `test/run.sh` runs the action against the pinned adnanh/webhook image with
 the hook as the infrastructure repository writes it, and against a local
 page for `health-url` (docker and node).
+
+A call whose answer was lost is sent again, up to three times; the host
+then deploys a second time. The signature covers no time: a signed call
+that was read can be sent again, which the host answers with another
+deploy of the same image (hueske-digital/infrastructure,
+docs/decisions/0037).

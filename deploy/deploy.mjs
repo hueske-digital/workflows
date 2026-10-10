@@ -61,10 +61,16 @@ if (healthUrl) {
       fail("health-json is a JSON object of the fields health-url must answer with");
     }
   }
-  if (!/^[1-9][0-9]{0,4}$/.test(healthTimeout)) {
-    fail("health-timeout is a number of seconds");
+  // The job of deploy.yml ends after 30 minutes.
+  if (!/^[1-9][0-9]{0,3}$/.test(healthTimeout) || Number(healthTimeout) > 1500) {
+    fail("health-timeout is a number of seconds, 1500 at most");
   }
   timeout = Number(healthTimeout);
+  // The stack's page answers before the host pulled the image too: only
+  // a field that tells the commit shows the new version.
+  if (!healthJson.includes('"{commit}"')) {
+    console.log('::warning::health-json names no "{commit}": the version that runs now answers as well, so this shows only that the page answers');
+  }
 } else if (healthJson) {
   fail("health-json needs health-url");
 }
@@ -92,6 +98,10 @@ for (let attempt = 1; attempt <= attempts; attempt++) {
     });
     answer = await response.text();
   } catch (error) {
+    // A redirect is no hook: asking again changes nothing.
+    if (error.cause?.message === "unexpected redirect") {
+      fail(`${target.origin} answers ${target.pathname} with a redirect: is host the wan name of the stack's host?`);
+    }
     if (attempt === attempts) fail(`no answer from ${target.origin}: ${error.cause?.code ?? error.name}`);
     console.log(`no answer from ${target.origin}, trying again`);
     await new Promise((resolve) => setTimeout(resolve, 5000 * attempt));
@@ -110,7 +120,7 @@ for (let attempt = 1; attempt <= attempts; attempt++) {
     continue;
   }
   const hint = {
-    403: "the request was not signed",
+    403: "the request was not signed, or the host's proxy refuses this runner's address",
     404: `${host} has no deploy hook for ${stack}: is deploy: true in its entry there, and the host right?`,
     500: `the signature does not match: is the secret ${stack}_deploy_secret of ${host}?`,
   }[response.status];
@@ -123,7 +133,7 @@ for (let attempt = 1; attempt <= attempts; attempt++) {
 function holds(got, wanted) {
   if (wanted === "{commit}") {
     const sha = process.env.GITHUB_SHA ?? "";
-    return typeof got === "string" && got.length >= 7 && sha.startsWith(got);
+    return typeof got === "string" && got.length >= 7 && sha.toLowerCase().startsWith(got.toLowerCase());
   }
   if (wanted !== null && typeof wanted === "object" && !Array.isArray(wanted)) {
     return got !== null && typeof got === "object" && !Array.isArray(got) &&
@@ -139,10 +149,12 @@ async function waitForHealth() {
   let last = "no answer yet";
   for (;;) {
     try {
-      const response = await fetch(health, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(10000) });
+      // A redirect is not followed: a page behind a login would answer
+      // with the login's 200.
+      const response = await fetch(health, { cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(10000) });
       const answer = await response.text();
       const text = answer.replace(/\s+/g, " ").replace(/::/g, ": :").trim().slice(0, 200);
-      last = `${response.status} ${text}`;
+      last = response.status >= 300 && response.status < 400 ? `${response.status}, a redirect: is the page behind a login?` : `${response.status} ${text}`;
       if (response.ok) {
         if (want === undefined) break;
         let got;
