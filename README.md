@@ -50,11 +50,9 @@ on:
 
 A scheduled run builds when an image of the Dockerfile's `FROM` lines
 changed since the last build (their digests are kept in a label of the
-image) or `latest` is `stale-days` old, for the packages a Dockerfile
-installs: a week old, so the weekly run builds unless a push built the
-image in between and its base is the same. A daily `schedule` follows a
-base image within a day and still builds at most once a week otherwise.
-Every other run builds.
+image) or `latest` is `stale-days` old, 30 by default, for the packages a
+Dockerfile installs: the weekly run follows a base image within a week
+and builds once a month otherwise. Every other run builds.
 
 There is no Docker daemon: a Dockerfile builds as Buildah builds it, 1.33
 on the organization's runners. `COPY --link`, `--parents` and `--exclude`
@@ -78,7 +76,7 @@ cache's steps stay.
 | `labels` | | one `name=value` a line |
 | `tags` | | tags besides `sha-<commit>`, one a line, instead of the defaults |
 | `push` | `true` | `false` builds only, as for a pull request |
-| `stale-days` | `7` | a scheduled run builds a `latest` of that age; `0` builds every run |
+| `stale-days` | `30` | a scheduled run builds a `latest` of that age; `0` builds every run |
 | `runner` | `self-hosted` | `github` for a public repository |
 
 Outputs: `image`, `digest` of what was pushed, and `built`, `false` for a
