@@ -1,7 +1,8 @@
 name: test
 
 # Builds test/ with image.yml on GitHub's runners and runs the result on
-# both architectures, and runs the deploy action against a real webhook. This repository is public: the organization's own
+# both architectures, runs the deploy action against a real webhook, and
+# checks when a scheduled run builds (test/stale.sh). This repository is public: the organization's own
 # runners serve private repositories only, where image.yml takes them.
 on:
   push:
@@ -61,3 +62,12 @@ jobs:
         with:
           persist-credentials: false
       - run: deploy/test/run.sh
+
+  stale:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: test/stale.sh
