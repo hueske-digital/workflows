@@ -36,11 +36,24 @@ architecture is built on a runner of its own; two are joined into one
 image by a second job, one is pushed with its tags by the build itself.
 The layers are cached in the repository `<image>/cache` of the registry.
 
-With a `schedule` of the caller the image follows its base images: a
-scheduled run builds only when an image of the Dockerfile's `FROM` lines
+With a `schedule` of the caller the image follows its base images, once
+a week by default:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 4 * * 1'
+```
+
+A scheduled run builds when an image of the Dockerfile's `FROM` lines
 changed since the last build (their digests are kept in a label of the
 image) or `latest` is `stale-days` old, for the packages a Dockerfile
-installs. Every other run builds.
+installs: a week old, so the weekly run builds unless a push built the
+image in between and its base is the same. A daily `schedule` follows a
+base image within a day and still builds at most once a week otherwise.
+Every other run builds.
 
 There is no Docker daemon: a Dockerfile builds as Buildah builds it.
 
