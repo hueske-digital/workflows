@@ -194,7 +194,12 @@ jobs:
           set -euo pipefail
           if [ -n "$PNPM_STORE" ]; then
             [[ $PNPM_STORE =~ ^(/[A-Za-z0-9_.-]+)+$ ]] || { echo "::error::pnpm-store $PNPM_STORE is no absolute path"; exit 1; }
-            BUILD_VOLUMES="$(pnpm store path):$PNPM_STORE"
+            # pnpm names the store with its version's directory (…/store/v10);
+            # the build's pnpm adds that itself.
+            store=$(pnpm store path)
+            case ${store##*/} in v[0-9]*) store=${store%/*} ;; esac
+            mkdir -p "$store"
+            BUILD_VOLUMES="$store:$PNPM_STORE"
             export BUILD_VOLUMES
           fi
           bash "$RUNNER_TEMP/build.sh"
