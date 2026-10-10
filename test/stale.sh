@@ -84,7 +84,7 @@ STUB_LATEST=$(latest "$bases" "$now") LATEST_ON=release run schedule 7
 if grep -q 'docker://ghcr.io/hueske-digital/demo:main$' "$work/log"; then
   echo "ok: scheduled, latest on releases: compared with the branch's tag"
 else
-  echo "FAILED: $(grep '^skopeo inspect --no-tags' "$work/log")"; failed=1;
+  echo "FAILED: $(grep '^skopeo inspect .*--no-tags' "$work/log")"; failed=1;
 fi
 
 # {version} in a build argument.
@@ -119,7 +119,7 @@ fi
 # Stages and flags: only the two images from outside are asked for.
 printf 'FROM --platform=linux/amd64 docker.io/library/golang:1 AS build\nRUN true\nFROM build AS test\nFROM scratch AS empty\nfrom docker.io/library/alpine:3\nCOPY --from=build /x /x\n' > "$work/ctx/Dockerfile"
 run push 7
-asked=$(grep -c '^skopeo inspect --raw' "$work/log" || true)
+asked=$(grep -c '^skopeo inspect .*--raw' "$work/log" || true)
 if [ "$asked" = 2 ] && grep -q 'golang:1$' "$work/log" && grep -q 'alpine:3$' "$work/log"; then echo "ok: stages, scratch and flags are no base images"; else echo "FAILED: asked for $asked base images: $(grep '^skopeo' "$work/log")"; failed=1; fi
 
 # A base named by a variable is not known: no label, and every run builds.
