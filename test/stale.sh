@@ -76,6 +76,7 @@ asked=$(grep -c '^skopeo inspect --raw' "$work/log" || true)
 if [ "$asked" = 2 ] && grep -q 'golang:1$' "$work/log" && grep -q 'alpine:3$' "$work/log"; then echo "ok: stages, scratch and flags are no base images"; else echo "FAILED: asked for $asked base images: $(grep '^skopeo' "$work/log")"; failed=1; fi
 
 # A base named by a variable is not known: no label, and every run builds.
+# shellcheck disable=SC2016 # the Dockerfile's own variable, not the shell's
 printf 'ARG BASE=docker.io/library/alpine:3\nFROM ${BASE}\n' > "$work/ctx/Dockerfile"
 LATEST=$(latest "$bases" "$now") run schedule 7; expect "scheduled, a base named by a variable" true
 if grep -q 'digital.hueske.workflows.bases' "$work/log"; then echo "FAILED: a label for an unknown base"; failed=1; else echo "ok: no label for an unknown base"; fi

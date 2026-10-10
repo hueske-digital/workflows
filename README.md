@@ -24,8 +24,8 @@ jobs:
 
 They run on the organization's runners (`[self-hosted, buildah]`), which
 serve private repositories only: a public repository passes `runner:
-github` to each, for GitHub's. Actions of others are pinned by their
-commit in here. A caller sets its own `concurrency`, so that of two
+github` to each, for GitHub's. Actions of others are named by their major
+version in here. A caller sets its own `concurrency`, so that of two
 pushes in a row the later one is the last to write `latest`.
 
 ## image.yml
@@ -134,6 +134,30 @@ build otherwise.
 | `file`, `build-args`, `labels`, `tags`, `push`, `stale-days`, `runner` | | as for `image.yml` |
 
 Outputs: `image`, `digest` and `built`.
+
+## node.yml
+
+Checks a Node project with pnpm: Node as `.nvmrc` names it, pnpm as
+`packageManager` of `package.json` does, `pnpm install --frozen-lockfile`
+with pnpm's store kept between runs, then the commands of `run`. On the
+organization's runners it takes one of either architecture. They have no
+Docker daemon: tests that start containers pass `runner: github`.
+
+```yaml
+jobs:
+  check:
+    uses: hueske-digital/workflows/.github/workflows/node.yml@v1
+    permissions:
+      contents: read
+```
+
+| Input | Default | |
+|---|---|---|
+| `directory` | `.` | the project's directory in the repository |
+| `node-version-file` | `.nvmrc` | names the Node version |
+| `run` | `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` | the commands after the install, a script of bash |
+| `runner` | `self-hosted` | `github` for a public repository |
+| `timeout` | `20` | minutes before the job is stopped |
 
 ## deploy.yml
 

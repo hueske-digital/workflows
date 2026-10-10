@@ -85,11 +85,35 @@ jobs:
           printf '%s' "$TOKEN" | podman login --username "$GITHUB_ACTOR" --password-stdin ghcr.io
           [ "$(podman run --rm "$IMAGE")" = "the runner true" ]
 
+  node:
+    uses: ./.github/workflows/node.yml
+    permissions:
+      contents: read
+    with:
+      directory: test/site
+      run: |
+        pnpm lint
+        pnpm build
+        test -f dist/index.html
+      runner: github
+
+  lint:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: shellcheck scripts/*.sh test/*.sh deploy/test/*.sh
+      # With the runner labels of .github/actionlint.yaml, and without
+      # the job context's workflow_sha, which this actionlint does not know.
+      - run: docker run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.7 -color
+
   deploy:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - run: deploy/test/run.sh
@@ -98,7 +122,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - run: test/stale.sh

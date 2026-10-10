@@ -1,0 +1,73 @@
+# Checks a Node project with pnpm: Node and pnpm as the project names
+# them, the dependencies from the lockfile with pnpm's store kept between
+# runs, then the commands of run. It runs on the organization's own
+# runners, of either architecture; a public repository passes runner:
+# github. There is no Docker daemon on the organization's runners: tests
+# that start containers take runner: github. The caller grants contents:
+# read (README.md).
+name: node
+
+on:
+  workflow_call:
+    inputs:
+      directory:
+        description: The project's directory in the repository.
+        type: string
+        default: .
+      node-version-file:
+        description: The file that names the Node version, in the project's directory.
+        type: string
+        default: .nvmrc
+      run:
+        description: The commands after pnpm install, a script of bash that ends at the first one that fails.
+        type: string
+        default: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+      runner:
+        description: self-hosted, the organization's runners, or github, GitHub's, which a public repository takes.
+        type: string
+        default: self-hosted
+      timeout:
+        description: Minutes before the job is stopped.
+        type: number
+        default: 20
+
+jobs:
+  node:
+    runs-on: ${{ inputs.runner != 'github' && fromJSON('["self-hosted", "buildah"]') || 'ubuntu-26.04' }}
+    timeout-minutes: ${{ inputs.timeout }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.directory }}
+    steps:
+      - env:
+          RUNNER: ${{ inputs.runner }}
+        working-directory: .
+        run: |
+          case $RUNNER in
+            self-hosted | github) ;;
+            *) echo "::error::runner $RUNNER is none of self-hosted and github"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ${{ inputs.directory }}/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.directory }}/${{ inputs.node-version-file }}
+          cache: pnpm
+          cache-dependency-path: ${{ inputs.directory }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # The caller's own commands, as a run step of its workflow would be:
+      # they reach bash as a file, not as text of this script.
+      - env:
+          RUN: ${{ inputs.run }}
+        run: |
+          printf '%s\n' "$RUN" > "$RUNNER_TEMP/run.sh"
+          bash -euo pipefail "$RUNNER_TEMP/run.sh"

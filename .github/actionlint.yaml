@@ -1,2 +1,6 @@
 self-hosted-runner:
   labels: [buildah, ubuntu-26.04, ubuntu-26.04-arm]
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'property "workflow_(sha|repository)" is not defined'
