@@ -42,6 +42,7 @@ run() {
     GITHUB_REF_TYPE="${REF_TYPE:-branch}" GITHUB_REF_NAME="${REF_NAME:-main}" DEFAULT_BRANCH=main GITHUB_ACTOR=test GITHUB_SERVER_URL=https://github.com \
     ARCH=amd64 FIRST_ARCH=amd64 SINGLE=true RUNNER=github PUSH=true TOKEN=t IMAGE= CONTEXT="$work/ctx" FILE= BUILD_ARGS="${ARGS:-}" LABELS= TAGS= PR_HEAD= \
     LATEST="${LATEST_ON:-branch}" BUILD_SECRETS="${SECRETS:-}" CACHE="${CACHE_IN:-registry}" \
+    PATHS="${PATHS_IN:-}" BEFORE="${BEFORE_IN:-}" PR_BASE="${PR_BASE_IN:-}" \
     BASE_VERSION="${BASE_VERSION:-1}" STUB_LATEST="${STUB_LATEST:-}" bash "$work/step.sh" > "$work/stdout" 2>&1 || [ -n "${MAY_FAIL:-}" ] || { echo "FAILED: the step ended with $?"; cat "$work/stdout"; failed=1; }
 }
 # expect <name> <built>: the output built, and a build exactly when it is true.
@@ -108,6 +109,29 @@ if grep -q -- '^buildah build --layers=false ' "$work/log" && ! grep -q -- '--ca
 else
   echo "FAILED: $(grep '^buildah build' "$work/log")"; failed=1
 fi
+
+# paths: a push or a pull request builds only when a file of them changed.
+repo=$work/repo
+git init -q "$repo"
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m first
+mkdir -p "$repo/apps/site" "$repo/docs"
+echo a > "$repo/apps/site/page"; echo a > "$repo/docs/readme.md"
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m site
+first=$(git -C "$repo" rev-parse HEAD~1) site=$(git -C "$repo" rev-parse HEAD)
+echo b > "$repo/docs/readme.md"
+git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q -m docs
+cd "$repo"
+PATHS_IN=apps/site BEFORE_IN=$site run push 7; expect "paths: a push that changed none of them" false
+PATHS_IN=apps/site BEFORE_IN=$first run push 7; expect "paths: a push that changed one of them" true
+PATHS_IN=$'apps/site\ndocs' BEFORE_IN=$site run push 7; expect "paths: the second of two changed" true
+PATHS_IN=$'.\n:(exclude)*.md' BEFORE_IN=$site run push 7; expect "paths: everything but what is excluded" false
+PATHS_IN=apps/site PR_BASE_IN=$site REF_NAME=7/merge run pull_request 7; expect "paths: a pull request against its base" false
+PATHS_IN=apps/site BEFORE_IN=0000000000000000000000000000000000000000 run push 7; expect "paths: a new branch builds" true
+PATHS_IN=apps/site BEFORE_IN=1111111111111111111111111111111111111111 run push 7; expect "paths: a commit that is gone builds" true
+PATHS_IN=apps/site BEFORE_IN=$site REF_TYPE=tag REF_NAME=v1.2.3 run push 7; expect "paths: a tag builds" true
+PATHS_IN=apps/site BEFORE_IN=$site run workflow_dispatch 7; expect "paths: a run by hand builds" true
+BEFORE_IN=$site run push 7; expect "without paths every push builds" true
+cd "$OLDPWD"
 
 # {version} in a build argument.
 REF_TYPE=tag REF_NAME=v1.2.3 ARGS='APP_VERSION=app@{version}' run push 7

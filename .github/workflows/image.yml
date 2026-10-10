@@ -68,6 +68,10 @@ on:
         description: With prepare, a path in the build at which every RUN finds the runner's pnpm store, so that an install there downloads little.
         type: string
         default: ''
+      paths:
+        description: Git pathspecs, one a line; with them a push or a pull request builds only when a file of them changed. Without, every one builds.
+        type: string
+        default: ''
       cache:
         description: registry keeps a layer for every instruction in the registry, for a Dockerfile with a RUN that takes long; none builds one layer a stage without it, which is faster where stages only copy and configure.
         type: string
@@ -134,6 +138,9 @@ jobs:
       TAGS: ${{ inputs.tags }}
       LATEST: ${{ inputs.latest }}
       CACHE: ${{ inputs.cache }}
+      PATHS: ${{ inputs.paths }}
+      BEFORE: ${{ github.event.before }}
+      PR_BASE: ${{ github.event.pull_request.base.sha }}
       PUSH: ${{ inputs.push }}
       RUNNER: ${{ inputs.runner }}
       PR_HEAD: ${{ github.event.pull_request.head.sha }}

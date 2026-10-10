@@ -40,6 +40,7 @@ build otherwise.
 | `cache` | `.astro-cache` | Astro's `cacheDir` |
 | `stage` | `build` | the Dockerfile's stage that builds the site |
 | `stage-path` | `/app/dist` | where that stage leaves `dist/` |
+| `paths` | | as for `image.yml`: a push or pull request builds only when a file of them changed |
 | `layer-cache` | `none` | `registry` for a Dockerfile with a `RUN` that takes long |
 | `file`, `build-args`, `labels`, `tags`, `push`, `stale-days`, `runner` | | as for `image.yml` |
 

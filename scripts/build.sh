@@ -3,7 +3,8 @@
 # build step of image.yml and astro.yml, which pass their inputs in the
 # environment (ARCH, IMAGE, CONTEXT, FILE, BUILD_ARGS, LABELS, TAGS, PUSH,
 # RUNNER, SINGLE, FIRST_ARCH, STALE_DAYS, TOKEN and the run's of GitHub;
-# LATEST and BUILD_SECRETS where a workflow has them).
+# LATEST, BUILD_SECRETS and PATHS with BEFORE and PR_BASE where a workflow
+# has them).
 # BUILD_VOLUMES, one directory:path a line, is in every RUN of the build
 # at that path. BUILD_CONTEXTS, one name=directory a line, puts a directory in the
 # place of a stage of the Dockerfile, which is then not built. With
@@ -114,6 +115,36 @@ if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$PUSH" = true ] && [ -n "$bases" ] 
     echo "The base images are unchanged and $follows is $age days old: nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
     echo "built=false" >> "$GITHUB_OUTPUT"
     exit 0
+  fi
+fi
+# With PATHS (git pathspecs, one a line) a push or a pull request builds
+# only when a file of them changed: since the commit before the push, or
+# against the pull request's base. A tag, a run by hand, a scheduled run
+# and a push without a commit before it (a new branch, a forced push whose
+# old commit is gone) build as without PATHS, and so does a comparison
+# that fails: rather a build too many than an image that stays old.
+if [ -n "${PATHS:-}" ] && [ "$GITHUB_REF_TYPE" != tag ]; then
+  base=''
+  case $GITHUB_EVENT_NAME in
+    push) base=${BEFORE:-} ;;
+    pull_request) base=${PR_BASE:-} ;;
+  esac
+  if [[ $base =~ ^[0-9a-f]{40}$ ]] && [ "$base" != 0000000000000000000000000000000000000000 ]; then
+    specs=()
+    while IFS= read -r line; do [ -z "$line" ] || specs+=("$line"); done <<< "$PATHS"
+    # The checkout holds one commit: the other one is fetched alone, with
+    # the run's token for a private repository.
+    if ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+      git -c "http.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')" \
+        fetch --quiet --no-tags --depth=1 origin "$base" 2> /dev/null || true
+    fi
+    changed=0
+    git diff --quiet "$base" HEAD -- "${specs[@]}" 2> /dev/null || changed=$?
+    if [ "$changed" = 0 ]; then
+      echo "Nothing of paths changed since ${base::7}: nothing to build." | tee -a "$GITHUB_STEP_SUMMARY"
+      echo "built=false" >> "$GITHUB_OUTPUT"
+      exit 0
+    fi
   fi
 fi
 echo "built=true" >> "$GITHUB_OUTPUT"

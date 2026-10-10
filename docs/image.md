@@ -29,6 +29,7 @@ jobs:
 | `node-version-file` | `.nvmrc` | with `prepare`, names the Node version, in that directory |
 | `build-contexts` | | one `name=directory` a line: the directory takes the place of the Dockerfile's stage of that name |
 | `pnpm-store` | | with `prepare`, a path in the build where every `RUN` finds the runner's pnpm store |
+| `paths` | | git pathspecs, one a line: a push or pull request builds only when a file of them changed |
 | `cache` | `registry` | `none` builds one layer a stage and asks no registry |
 | `latest` | `branch` | `release` puts `latest` on the newest pushed version tag and gives the default branch its own name as its tag |
 | `push` | `true` | `false` builds only, as for a pull request |
@@ -84,6 +85,34 @@ The comparison reads the tag the default branch builds: `latest`, or the
 branch's name with `latest: release`. A Dockerfile whose `FROM` names a
 variable, or a caller with its own `tags`, is built by every scheduled
 run.
+
+## Building only what changed
+
+With `paths` a push or a pull request builds only when a file of them
+changed since the commit before the push, or against the pull request's
+base; otherwise the job ends after a few seconds with `built: false`, and
+what follows it (a deploy) is skipped as after a scheduled run with
+nothing to do. A repository with several images names for each what it is
+made of:
+
+```yaml
+    with:
+      image: ghcr.io/hueske-digital/shop-web
+      file: apps/web/Dockerfile
+      paths: |
+        apps/web
+        packages
+        package.json
+        pnpm-lock.yaml
+```
+
+The lines are git's pathspecs: a directory, a file, a glob, and
+`:(exclude)*.md` for what does not count (with `.` before it for
+everything else). A version tag, a run by hand, a scheduled run and the
+first push of a branch build whatever changed, and so does a comparison
+that cannot be made. An image whose paths miss something it is made of
+stays old without anyone noticing, and no scheduled run finds that: the
+lockfile and what several images share belong in the list.
 
 ## Building on the runner first
 
