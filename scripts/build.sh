@@ -92,8 +92,9 @@ bases=''
 if command -v skopeo > /dev/null; then
   list='' stages=' '
   while read -r ref stage; do
-    case "$stages" in *" $ref "*) continue ;; esac
+    known=$stages
     [ -z "$stage" ] || stages+="$stage "
+    case "$known" in *" $ref "*) continue ;; esac
     [ "$ref" != scratch ] || continue
     case $ref in *'$'*) list=unknown; break ;; esac
     list+="$ref@sha256:$(skopeo inspect --retry-times 3 --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"$'\n'
