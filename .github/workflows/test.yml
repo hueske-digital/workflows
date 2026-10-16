@@ -105,7 +105,7 @@ jobs:
       runner: github
 
   # A dependency from GitHub's npm registry, which wants a token even for
-  # a public package.
+  # a public package; with pnpm 12, whose fetch takes no --frozen-lockfile.
   node-packages:
     uses: ./.github/workflows/node.yml
     permissions:

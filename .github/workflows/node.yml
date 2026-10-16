@@ -93,7 +93,7 @@ jobs:
             trap 'rm -f "$userconfig"' EXIT
             (umask 077 && printf '//npm.pkg.github.com/:_authToken=%s\n' "$TOKEN" > "$userconfig")
             unset TOKEN
-            npm_config_userconfig="$userconfig" pnpm fetch --frozen-lockfile
+            npm_config_userconfig="$userconfig" pnpm fetch
             rm -f "$userconfig"
             pnpm install --frozen-lockfile --offline
           else
