@@ -4,7 +4,7 @@
 # runners, of either architecture; a public repository passes runner:
 # github. There is no Docker daemon on the organization's runners: tests
 # that start containers take runner: github. The caller grants contents:
-# read (README.md).
+# read (README.md), and packages: read with github-packages.
 name: node
 
 on:
@@ -26,6 +26,10 @@ on:
           pnpm typecheck
           pnpm test
           pnpm build
+      github-packages:
+        description: true lets pnpm install read packages from GitHub's npm registry (npm.pkg.github.com) with the run's token, for which the caller grants the permission packages read.
+        type: boolean
+        default: false
       runner:
         description: self-hosted, the organization's runners, or github, GitHub's, which a public repository takes.
         type: string
@@ -74,7 +78,27 @@ jobs:
           path: ${{ steps.store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(format('{0}/pnpm-lock.yaml', inputs.directory)) }}
           restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
-      - run: pnpm install --frozen-lockfile
+      # GitHub's npm registry wants a token even for a public package. It
+      # reaches pnpm in a user config of the job's temporary directory,
+      # never in ~/.npmrc, which the organization's runners keep from one
+      # job to the next, and only for pnpm fetch, which fills the store
+      # and runs no script of a dependency; the install that runs them
+      # comes after the token is gone, from the store alone.
+      - env:
+          GITHUB_PACKAGES: ${{ inputs.github-packages }}
+          TOKEN: ${{ inputs.github-packages && github.token || '' }}
+        run: |
+          if [ "$GITHUB_PACKAGES" = true ]; then
+            userconfig="$RUNNER_TEMP/npmrc"
+            trap 'rm -f "$userconfig"' EXIT
+            (umask 077 && printf '//npm.pkg.github.com/:_authToken=%s\n' "$TOKEN" > "$userconfig")
+            unset TOKEN
+            npm_config_userconfig="$userconfig" pnpm fetch --frozen-lockfile
+            rm -f "$userconfig"
+            pnpm install --frozen-lockfile --offline
+          else
+            pnpm install --frozen-lockfile
+          fi
       - if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.pnpm-cache.outputs.cache-hit != 'true'
         shell: bash
         working-directory: ${{ inputs.directory }}

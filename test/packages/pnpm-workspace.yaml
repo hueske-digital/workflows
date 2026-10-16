@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - '@hueske-digital/dexcom-ts@0.1.2'

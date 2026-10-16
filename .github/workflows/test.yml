@@ -2,7 +2,8 @@ name: test
 
 # Builds test/image with image.yml on GitHub's runners and runs the result on
 # both architectures, runs the deploy action against a real webhook, and
-# runs the cases of scripts/build.sh (test/build.sh), and builds test/site
+# runs the cases of scripts/build.sh (test/build.sh), installs test/packages
+# from GitHub's npm registry with node.yml, and builds test/site
 # with astro.yml, whose image must hold the dist/ of the runner. This repository is public: the organization's own
 # runners serve private repositories only, where image.yml takes them.
 on:
@@ -101,6 +102,21 @@ jobs:
         pnpm lint
         pnpm build
         test -f dist/index.html
+      runner: github
+
+  # A dependency from GitHub's npm registry, which wants a token even for
+  # a public package.
+  node-packages:
+    uses: ./.github/workflows/node.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      directory: test/packages
+      github-packages: true
+      run: |
+        node --input-type=module -e "await import('@hueske-digital/dexcom-ts')"
+        test ! -e "$RUNNER_TEMP/npmrc"
       runner: github
 
   lint:
