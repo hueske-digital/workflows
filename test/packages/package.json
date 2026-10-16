@@ -1,0 +1,9 @@
+{
+  "name": "workflows-test-packages",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "dependencies": {
+    "@hueske-digital/dexcom-ts": "0.1.2"
+  }
+}

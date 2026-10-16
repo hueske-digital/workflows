@@ -1,0 +1,30 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@hueske-digital/dexcom-ts':
+        specifier: 0.1.2
+        version: 0.1.2
+
+packages:
+
+  '@hueske-digital/dexcom-ts@0.1.2':
+    resolution: {integrity: sha512-iCEO5CNP7Ql26JAqRGtP+e8RjQU0l+TzmF473HuX/2Jnm8jPkJdl0wjtaLXb+Zvlfkx/sHLwK+Md22Sw2zxVUw==, tarball: https://npm.pkg.github.com/download/@hueske-digital/dexcom-ts/0.1.2/e98372f8a93e156fbfb783f1e83b777c7321f06e}
+    engines: {node: '>=22'}
+
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
+snapshots:
+
+  '@hueske-digital/dexcom-ts@0.1.2':
+    dependencies:
+      zod: 4.6.5
+
+  zod@4.6.5: {}

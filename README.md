@@ -58,8 +58,9 @@ jobs:
   (`[self-hosted, buildah]`: one job a container, Buildah and no Docker
   daemon), which serve private repositories only. A public repository
   passes `runner: github` to each call, for GitHub's.
-- **Permissions.** The caller grants them per job: `contents: read`, and
-  `packages: write` where an image is pushed. A called workflow cannot
+- **Permissions.** The caller grants them per job: `contents: read`,
+  `packages: write` where an image is pushed, and `packages: read` where
+  `node.yml` installs from GitHub's npm registry. A called workflow cannot
   take more.
 - **Concurrency** is the caller's, so that of two pushes in a row the
   later one is the last to write `latest`.
@@ -74,7 +75,7 @@ jobs:
 | `.github/workflows/` | the four workflows, and `test.yml`, which runs them |
 | `scripts/build.sh` | the image build of `image.yml` and `astro.yml`; they fetch it at the commit they are called at |
 | `deploy/` | the action `deploy.yml` runs, with its test against a real webhook |
-| `test/` | what `test.yml` builds: an image, a site, a prepared build, and `test/build.sh`, the cases of `scripts/build.sh` |
+| `test/` | what `test.yml` builds: an image, a site, a prepared build, a project with a package from GitHub's npm registry, and `test/build.sh`, the cases of `scripts/build.sh` |
 | `docs/` | one page a workflow, and the Dockerfile's |
 
 Actions of others are named by their major version in here.
